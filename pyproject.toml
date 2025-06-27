@@ -39,6 +39,7 @@ dependencies = [
     "pyyaml",
     "html2text",
     "psutil",
+    "ollama>=0.5.1",
 ]
 
 [project.optional-dependencies]

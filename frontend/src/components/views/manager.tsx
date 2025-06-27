@@ -76,7 +76,10 @@ export const SessionManager: React.FC = () => {
       }
     } catch (error) {
       console.error("Error fetching sessions:", error);
-      messageApi.error("Error loading sessions");
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      messageApi.error(`Error loading sessions: ${errorMessage}`);
+      console.log("用户信息:", user);
+      console.log("API基础URL:", getServerUrl());
     } finally {
       setIsLoading(false);
     }

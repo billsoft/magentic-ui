@@ -348,7 +348,7 @@ class WebSocketManager:
                 run.error_message = error
             self.db_manager.upsert(run)
 
-    def create_input_func(self, run_id: int, timeout: int = 600) -> InputFuncType:
+    def create_input_func(self, run_id: int, timeout: int = 1800) -> InputFuncType:
         """
         Creates an input function for a specific run
 

@@ -13,16 +13,28 @@ export class SessionAPI {
   }
 
   async listSessions(userId: string): Promise<Session[]> {
+    try {
     const response = await fetch(
-      `${this.getBaseUrl()}/sessions/?user_id=${userId}`,
+        `${this.getBaseUrl()}/sessions/?user_id=${encodeURIComponent(userId)}`,
       {
         headers: this.getHeaders(),
+          redirect: 'follow', // 明确处理重定向
       }
     );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP错误! 状态: ${response.status} ${response.statusText}`);
+      }
+      
     const data = await response.json();
-    if (!data.status)
+      if (!data.status) {
       throw new Error(data.message || "Failed to fetch sessions");
+      }
     return data.data;
+    } catch (error) {
+      console.error('listSessions详细错误:', error);
+      throw error;
+    }
   }
 
   async getSession(sessionId: number, userId: string): Promise<Session> {

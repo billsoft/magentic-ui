@@ -1,0 +1,129 @@
+# =====================================================
+# Ollama Gemma3 27B 配置 - 本地高性能模型
+# 适用于: Magentic-UI + 本地Ollama + Gemma3:27B
+# =====================================================
+
+######################################
+# 核心模型配置 - Gemma3 27B 本地模型  #
+######################################
+model_config: &client
+  provider: autogen_ext.models.ollama.OllamaChatCompletionClient
+  config:
+    model: qwen3:32b
+    host: http://localhost:11434
+    timeout: 300.0  # 大模型需要更长超时时间
+    max_retries: 3
+    keep_alive: "10m"  # 保持模型在内存中10分钟
+    model_info:
+      vision: false  # Gemma3不支持视觉
+      function_calling: true
+      json_output: true
+      family: qwen
+      structured_output: false
+      multiple_system_messages: true
+    extra_body:
+      temperature: 0.7
+      top_p: 0.9
+      num_ctx: 8192  # Gemma3上下文长度
+      repeat_penalty: 1.1
+      top_k: 40
+      keep_alive: "10m"  # 在extra_body中也设置，确保传递给Ollama
+
+######################################
+# 各代理专用配置 - 性能优化           #
+######################################
+
+# 协调器 - 使用最强模型进行规划
+orchestrator_client: *client
+
+# 编程代理 - 代码生成
+coder_client: *client
+
+# 网页浏览代理 - 使用主模型
+web_surfer_client: *client
+
+# 文件浏览代理 - 使用主模型
+file_surfer_client: *client
+
+# 动作守卫 - 使用更快的模型以提高响应速度
+action_guard_client:
+  provider: autogen_ext.models.ollama.OllamaChatCompletionClient
+  config:
+    model: gemma3:4b  # 使用更快的4B模型
+    host: http://localhost:11434
+    timeout: 60.0
+    max_retries: 2
+    keep_alive: "10m"  # 保持守卫模型在内存中10分钟
+    model_info:
+      vision: false
+      function_calling: true
+      json_output: true
+      family: gemma
+      structured_output: false
+    extra_body:
+      temperature: 0.3  # 守卫需要更保守
+      top_p: 0.8
+      num_ctx: 4096
+      repeat_penalty: 1.05
+      keep_alive: "10m"  # 在extra_body中也设置
+
+######################################
+# 应用程序配置 - 本地模型优化         #
+######################################
+
+# 协作模式
+cooperative_planning: true
+autonomous_execution: false
+allow_follow_up_input: true
+
+# 性能配置 - 针对本地模型调整
+max_actions_per_step: 4  # 本地模型适当降低并发
+multiple_tools_per_call: true
+max_turns: 25  # 适中的轮次限制
+model_context_token_limit: 8192  # 匹配Gemma3上下文
+
+# 安全配置
+approval_policy: auto-conservative
+action_guard_enabled: true
+require_authentication: false
+
+# 网络配置
+allowed_websites: []
+browser_headless: false
+browser_local: false  # 仍使用Docker浏览器
+playwright_port: -1
+novnc_port: -1
+
+# Docker配置
+inside_docker: true
+run_without_docker: false
+
+# 高级配置
+allow_for_replans: true
+do_bing_search: false
+websurfer_loop: false
+retrieve_relevant_plans: never
+
+######################################
+# 本地模型特殊配置                    #
+######################################
+
+# 针对Gemma3的特殊优化
+gemma3_optimizations:
+  # 推理参数优化
+  inference_params:
+    mirostat: 0  # 关闭mirostat采样
+    mirostat_eta: 0.1
+    mirostat_tau: 5.0
+    num_thread: 8  # 根据CPU核心数调整
+    
+  # 内存管理
+  memory_management:
+    num_gpu: 1  # GPU数量
+    gpu_memory_utilization: 0.9
+    max_model_len: 8192
+    
+  # 性能监控
+  performance_monitoring:
+    log_inference_time: true
+    log_memory_usage: true 

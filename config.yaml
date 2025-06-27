@@ -1,0 +1,66 @@
+# =====================================================
+# OpenRouter 配置示例 - Claude 3.5 Sonnet
+# 适用于: Magentic-UI + OpenRouter API
+# =====================================================
+
+######################################
+# 核心模型配置 - OpenRouter Claude    #
+######################################
+model_config: &client
+  provider: autogen_ext.models.openai.OpenAIChatCompletionClient
+  config:
+    model: anthropic/claude-sonnet-4
+    api_key: $OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    timeout: 120.0
+    max_retries: 3
+    model_info:
+      vision: true
+      function_calling: true
+      json_output: false
+      family: claude-3-5-sonnet
+      structured_output: false
+      multiple_system_messages: false
+    default_headers:
+      HTTP-Referer: https://magentic-ui.local
+      X-Title: Magentic-UI-Development
+    extra_body:
+      temperature: 0.7
+      max_tokens: 4096
+      top_p: 0.9
+
+######################################
+# 各代理专用配置                      #
+######################################
+
+orchestrator_client: *client
+coder_client: *client
+web_surfer_client: *client
+file_surfer_client: *client
+action_guard_client: *client
+
+######################################
+# 应用程序配置                        #
+######################################
+
+cooperative_planning: true
+autonomous_execution: false
+allow_follow_up_input: true
+max_actions_per_step: 8
+multiple_tools_per_call: true
+max_turns: 50
+model_context_token_limit: 200000
+approval_policy: auto-conservative
+action_guard_enabled: true
+require_authentication: false
+allowed_websites: []
+browser_headless: false
+browser_local: false
+playwright_port: -1
+novnc_port: -1
+inside_docker: true
+run_without_docker: false
+allow_for_replans: true
+do_bing_search: false
+websurfer_loop: false
+retrieve_relevant_plans: never 

@@ -1,0 +1,79 @@
+# =====================================================
+# Ollama 本地配置示例 - Qwen2.5VL
+# 适用于: Magentic-UI + 本地Ollama服务
+# =====================================================
+
+######################################
+# 核心模型配置 - Ollama 本地模型      #
+######################################
+model_config: &client
+  provider: autogen_ext.models.ollama.OllamaChatCompletionClient
+  config:
+    model: qwen2.5vl:32b
+    host: http://localhost:11434
+    timeout: 300.0
+    max_retries: 3
+    model_info:
+      vision: true
+      function_calling: true
+      json_output: false
+      family: qwen
+      structured_output: false
+      multiple_system_messages: true
+    extra_body:
+      temperature: 0.7
+      top_p: 0.9
+      num_ctx: 32768
+
+######################################
+# 各代理专用配置                      #
+######################################
+
+orchestrator_client: *client
+coder_client: *client
+web_surfer_client: *client
+file_surfer_client: *client
+
+# 动作守卫使用更快的模型
+action_guard_client:
+  provider: autogen_ext.models.ollama.OllamaChatCompletionClient
+  config:
+    model: qwen2.5:14b  # 使用更快的模型
+    host: http://localhost:11434
+    timeout: 60.0
+    max_retries: 2
+    model_info:
+      vision: false
+      function_calling: true
+      json_output: true
+      family: qwen
+      structured_output: false
+    extra_body:
+      temperature: 0.3
+      top_p: 0.8
+
+######################################
+# 应用程序配置                        #
+######################################
+
+cooperative_planning: true
+autonomous_execution: false
+allow_follow_up_input: true
+max_actions_per_step: 6  # 本地模型适当降低
+multiple_tools_per_call: true
+max_turns: 30  # 本地模型适当降低
+model_context_token_limit: 32768  # 匹配模型上下文长度
+approval_policy: auto-conservative
+action_guard_enabled: true
+require_authentication: false
+allowed_websites: []
+browser_headless: false
+browser_local: false
+playwright_port: -1
+novnc_port: -1
+inside_docker: true
+run_without_docker: false
+allow_for_replans: true
+do_bing_search: false
+websurfer_loop: false
+retrieve_relevant_plans: never 
