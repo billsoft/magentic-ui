@@ -16,6 +16,7 @@ class ModelClientConfigs(BaseModel):
         coder (Optional[Union[ComponentModel, Dict[str, Any]]]): Configuration for the coder component. Default: None.
         file_surfer (Optional[Union[ComponentModel, Dict[str, Any]]]): Configuration for the file surfer component. Default: None.
         action_guard (Optional[Union[ComponentModel, Dict[str, Any]]]): Configuration for the action guard component. Default: None.
+        image_generator (Optional[Union[ComponentModel, Dict[str, Any]]]): Configuration for the image generator component. Default: None.
     """
 
     orchestrator: Optional[Union[ComponentModel, Dict[str, Any]]] = None
@@ -23,6 +24,7 @@ class ModelClientConfigs(BaseModel):
     coder: Optional[Union[ComponentModel, Dict[str, Any]]] = None
     file_surfer: Optional[Union[ComponentModel, Dict[str, Any]]] = None
     action_guard: Optional[Union[ComponentModel, Dict[str, Any]]] = None
+    image_generator: Optional[Union[ComponentModel, Dict[str, Any]]] = None
 
     default_client_config: ClassVar[Dict[str, Any]] = {
         "provider": "OpenAIChatCompletionClient",

@@ -1,7 +1,7 @@
 # api/ws.py
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -21,7 +21,7 @@ async def run_websocket(
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
     db=Depends(get_db),
 ):
-    """WebSocket endpoint for run communication"""
+    """WebSocket endpoint for run communication with reconnection support"""
     # Verify run exists and is in valid state
     run_response = db.get(Run, filters={"id": run_id}, return_json=False)
     if not run_response.status or not run_response.data:
@@ -29,16 +29,21 @@ async def run_websocket(
         await websocket.close(code=4004, reason="Run not found")
         return
 
-    # run = run_response.data[0]
-    # if run.status not in [RunStatus.CREATED, RunStatus.ACTIVE]:
-    #     await websocket.close(code=4003, reason="Run not in valid state")
-    #     return
-
-    # Connect websocket
-    connected = await ws_manager.connect(websocket, run_id)
-    if not connected:
-        await websocket.close(code=4002, reason="Failed to establish connection")
-        return
+    run = run_response.data[0]
+    
+    # Check if this is a reconnection to an existing background task
+    if run.status in ["active", "awaiting_input", "paused"] and hasattr(ws_manager, '_team_managers') and run_id in ws_manager._team_managers:
+        logger.info(f"Attempting to reconnect to background task {run_id}")
+        reconnected = await ws_manager.reconnect(websocket, run_id)
+        if not reconnected:
+            await websocket.close(code=4003, reason="Failed to reconnect to background task")
+            return
+    else:
+        # New connection
+        connected = await ws_manager.connect(websocket, run_id)
+        if not connected:
+            await websocket.close(code=4002, reason="Failed to establish connection")
+            return
 
     try:
         logger.info(f"WebSocket connection established for run {run_id}")
@@ -69,7 +74,7 @@ async def run_websocket(
                             {
                                 "type": "error",
                                 "error": "Invalid start message format",
-                                "timestamp": datetime.utcnow().isoformat(),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
                             }
                         )
 
@@ -79,40 +84,30 @@ async def run_websocket(
                     await ws_manager.stop_run(run_id, reason=reason)
                     break
 
+                elif message.get("type") == "input_response":
+                    logger.info(f"Received input response for run {run_id}")
+                    response = message.get("response", "")
+                    await ws_manager.handle_input_response(run_id, response)
+
                 elif message.get("type") == "ping":
                     await websocket.send_json(
-                        {"type": "pong", "timestamp": datetime.utcnow().isoformat()}
+                        {"type": "pong", "timestamp": datetime.now(timezone.utc).isoformat()}
                     )
 
-                elif message.get("type") == "input_response":
-                    # Handle input response from client
-                    response = message.get("response")
-                    if response is not None:
-                        await ws_manager.handle_input_response(run_id, response)
-                    else:
-                        logger.warning(
-                            f"Invalid input response format for run {run_id}"
-                        )
-                elif message.get("type") == "pause":
-                    logger.info(f"Received pause request for run {run_id}")
-                    await ws_manager.pause_run(run_id)
-
-                elif message.get("type") == "resume":
-                    logger.info(f"Received resume request for run {run_id}")
-                    await ws_manager.resume_run(run_id)
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid JSON received: {raw_message}")
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected for run {run_id}")
+                await ws_manager.disconnect(run_id)
+                break
+            except Exception as e:
+                logger.error(f"Error in WebSocket message handling for run {run_id}: {e}")
                 await websocket.send_json(
                     {
-                        "type": "error",
-                        "error": "Invalid message format",
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "type": "error", 
+                        "error": str(e),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                 )
 
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for run {run_id}")
     except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}")
-    finally:
+        logger.error(f"WebSocket error for run {run_id}: {e}")
         await ws_manager.disconnect(run_id)

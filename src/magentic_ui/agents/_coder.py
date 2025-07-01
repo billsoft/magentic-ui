@@ -349,7 +349,23 @@ class CoderAgent(BaseChatAgent, Component[CoderAgentConfig]):
     - You have access to the standard Python libraries in addition to numpy, pandas, scikit-learn, matplotlib, pillow, requests, beautifulsoup4.
     - If you need to use an external library, write first a shell script that installs the library first using pip install, then add code blocks to use the library.
     - Always use print statements to output your work and partial results.
-    - For showing plots or other visualizations that are not just text, make sure to save them to file with the right extension for them to be displayed.
+    - For data visualization and plots, use matplotlib with proper error handling. Always save plots to files with the right extension for display.
+    - When creating plots with matplotlib, use the following error-resistant pattern:
+      ```python
+      import matplotlib
+      matplotlib.use('Agg')  # Use non-interactive backend
+      import matplotlib.pyplot as plt
+      
+      try:
+          # Your plotting code here
+          plt.savefig('filename.png', dpi=300, bbox_inches='tight')
+          plt.close()  # Always close to free memory
+          print("Plot saved successfully to filename.png")
+      except Exception as e:
+          print(f"Error creating plot: {{e}}")
+          plt.close()  # Ensure cleanup even on error
+      ```
+    - For simple drawing or diagram requests, consider if the user's model has vision/multimodal capabilities that might be more appropriate than code-based plotting.
 
    VERY IMPORTANT: If you intend to write code to be executed, do not end your response without a code block. If you want to write code you must provide a code block in the current generation.
     """

@@ -40,6 +40,7 @@ dependencies = [
     "html2text",
     "psutil",
     "ollama>=0.5.1",
+    "python-socks[asyncio]>=2.7.1",
 ]
 
 [project.optional-dependencies]

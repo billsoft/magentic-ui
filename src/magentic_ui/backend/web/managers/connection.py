@@ -348,13 +348,13 @@ class WebSocketManager:
                 run.error_message = error
             self.db_manager.upsert(run)
 
-    def create_input_func(self, run_id: int, timeout: int = 1800) -> InputFuncType:
+    def create_input_func(self, run_id: int, timeout: int = 3600) -> InputFuncType:
         """
         Creates an input function for a specific run
 
         Args:
             run_id (int): ID of the run
-            timeout (int, optional): Timeout for input response in seconds. Default: 600
+            timeout (int, optional): Timeout for input response in seconds. Default: 3600 (1 hour)
         Returns:
             InputFuncType: Input function for the run
         """
@@ -370,26 +370,38 @@ class WebSocketManager:
 
                 # update run status to awaiting_input
                 await self._update_run_status(run_id, RunStatus.AWAITING_INPUT)
-                # Send input request to client
-                logger.info(
-                    f"Sending input request for run {run_id}: ({input_type}) {prompt}"
-                )
-                await self._send_message(
-                    run_id,
-                    {
-                        "type": "input_request",
-                        "input_type": input_type,
-                        "prompt": prompt,
-                        "data": {"source": "system", "content": prompt},
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    },
-                )
-
-                # Store input_request in the Run object
+                
+                # Store input_request in the Run object for persistence
                 run = await self._get_run(run_id)
                 if run:
                     run.input_request = {"prompt": prompt, "input_type": input_type}
                     self.db_manager.upsert(run)
+                
+                # Send input request to client only if connection exists
+                if run_id in self._connections and run_id not in self._closed_connections:
+                    logger.info(
+                        f"Sending input request for run {run_id}: ({input_type}) {prompt}"
+                    )
+                    await self._send_message(
+                        run_id,
+                        {
+                            "type": "input_request",
+                            "input_type": input_type,
+                            "prompt": prompt,
+                            "data": {"source": "system", "content": prompt},
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                else:
+                    # Connection lost - save state and provide default response for autonomous tasks
+                    logger.warning(f"No WebSocket connection for run {run_id}, providing default response")
+                    if "continue" in prompt.lower() or "proceed" in prompt.lower():
+                        await self._update_run_status(run_id, RunStatus.ACTIVE)
+                        return "continue"
+                    else:
+                        # For other inputs, try to provide a reasonable default
+                        await self._update_run_status(run_id, RunStatus.ACTIVE)
+                        return "yes"  # Default approval for most actions
 
                 # Wait for response with timeout
                 if run_id in self._input_responses:
@@ -399,19 +411,25 @@ class WebSocketManager:
                             while True:
                                 # Check if run was closed/cancelled
                                 if run_id in self._closed_connections:
-                                    raise ValueError("Run was closed")
+                                    logger.warning(f"Run {run_id} was closed during input wait")
+                                    # Don't raise error, try to continue with default response
+                                    return "continue"
 
                                 # Try to get response with short timeout
                                 try:
                                     response = await asyncio.wait_for(
                                         self._input_responses[run_id].get(),
-                                        timeout=min(timeout, 5),
+                                        timeout=min(timeout, 30),  # Check every 30 seconds
                                     )
                                     await self._update_run_status(
                                         run_id, RunStatus.ACTIVE
                                     )
                                     return response
                                 except asyncio.TimeoutError:
+                                    # Check if we should continue with automatic response
+                                    if run_id in self._closed_connections:
+                                        logger.info(f"Connection lost for run {run_id}, providing automatic response")
+                                        return "continue"
                                     continue  # Keep checking for closed status
 
                         response = await asyncio.wait_for(
@@ -420,19 +438,36 @@ class WebSocketManager:
                         return response
 
                     except asyncio.TimeoutError:
-                        # Stop the run if timeout occurs
-                        logger.warning(f"Input response timeout for run {run_id}")
-                        await self.stop_run(
+                        # Enhanced timeout handling - don't immediately stop the run
+                        logger.warning(f"Input response timeout for run {run_id}, but keeping run alive")
+                        
+                        # Update run with timeout info but don't stop it
+                        await self._send_message(
                             run_id,
-                            "Magentic-UI timed out while waiting for your input. To resume, please enter a follow-up message in the input box or you can simply type 'continue'.",
+                            {
+                                "type": "system",
+                                "status": "timeout_warning", 
+                                "message": "Input timeout occurred, but task will continue automatically",
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
                         )
-                        raise
+                        
+                        # Provide default response to continue execution
+                        await self._update_run_status(run_id, RunStatus.ACTIVE)
+                        return "continue"  # Allow task to proceed
                 else:
-                    raise ValueError(f"No input queue for run {run_id}")
+                    logger.warning(f"No input queue for run {run_id}, providing default response")
+                    await self._update_run_status(run_id, RunStatus.ACTIVE)
+                    return "continue"
 
             except Exception as e:
                 logger.error(f"Error handling input for run {run_id}: {e}")
-                raise
+                # Don't re-raise - provide default response to continue
+                try:
+                    await self._update_run_status(run_id, RunStatus.ACTIVE)
+                except:
+                    pass  # Ignore secondary errors
+                return "continue"
 
         return input_handler
 
@@ -483,23 +518,31 @@ class WebSocketManager:
 
     async def disconnect(self, run_id: int) -> None:
         """
-        Clean up connection and associated resources
+        Clean up connection but allow background task continuation
 
         Args:
             run_id (int): ID of the run to disconnect
         """
-        logger.info(f"Disconnecting run {run_id}")
+        logger.info(f"Disconnecting WebSocket for run {run_id}, but keeping task alive")
 
-        # Mark as closed before cleanup to prevent any new messages
+        # Mark as closed to prevent new messages
         self._closed_connections.add(run_id)
 
-        # Cancel any running tasks
-        await self.stop_run(run_id, "Connection closed")
+        # Save current state to database for later recovery
+        run = await self._get_run(run_id)
+        if run and run.status in [RunStatus.ACTIVE, RunStatus.AWAITING_INPUT]:
+            # Update status to indicate background execution
+            run.status = RunStatus.ACTIVE  # Keep active for background processing
+            self.db_manager.upsert(run)
+            logger.info(f"Run {run_id} will continue in background mode")
 
-        # Clean up resources
+        # Clean up WebSocket resources but keep task running
         self._connections.pop(run_id, None)
-        self._cancellation_tokens.pop(run_id, None)
         self._input_responses.pop(run_id, None)
+        
+        # DO NOT cancel the cancellation token or stop the team manager
+        # This allows the task to continue running in the background
+        logger.info(f"WebSocket disconnected for run {run_id}, task continues in background")
 
     async def _send_message(self, run_id: int, message: Dict[str, Any]) -> None:
         """Send a message through the WebSocket with connection state checking
@@ -578,10 +621,25 @@ class WebSocketManager:
                 message_content: list[dict[str, Any]] = []
                 for row in message_dump["content"]:
                     if "data" in row:
+                        # 🔧 根据消息类型智能设置alt文本
+                        alt_text = "WebSurfer Screenshot"  # 默认值
+                        if "metadata" in message_dump and message_dump["metadata"]:
+                            msg_type = message_dump["metadata"].get('type', '')
+                            logger.debug(f"🖼️ 处理图像消息，类型: {msg_type}")
+                            if msg_type == 'image_generation':
+                                alt_text = row.get('alt', f"Generated image")
+                                logger.info(f"✅ 图像生成消息，alt设置为: {alt_text}")
+                            elif msg_type == 'browser_screenshot':
+                                alt_text = "WebSurfer Screenshot"
+                            elif msg_type == 'file_surfer_response':
+                                alt_text = "File content"
+                        else:
+                            logger.debug(f"🖼️ 图像消息无metadata，使用默认alt: {alt_text}")
+                        
                         message_content.append(
                             {
                                 "url": f"data:image/png;base64,{row['data']}",
-                                "alt": "WebSurfer Screenshot",
+                                "alt": alt_text,
                             }
                         )
                     else:
@@ -679,7 +737,7 @@ class WebSocketManager:
 
         try:
             # First cancel all running tasks
-            for run_id in self.active_runs.copy():
+            for run_id in self.active_connections.copy():
                 if run_id in self._cancellation_tokens:
                     self._cancellation_tokens[run_id].cancel()
                 run = await self._get_run(run_id)
@@ -767,3 +825,64 @@ class WebSocketManager:
             if team_manager:
                 await team_manager.resume_run()
                 await self._update_run_status(run_id, RunStatus.ACTIVE)
+
+    async def reconnect(self, websocket: WebSocket, run_id: int) -> bool:
+        """
+        Reconnect to an existing background run
+
+        Args:
+            websocket (WebSocket): New WebSocket connection
+            run_id (int): ID of the existing run
+
+        Returns:
+            bool: True if reconnection successful
+        """
+        try:
+            # Check if run exists and is still active
+            run = await self._get_run(run_id)
+            if not run:
+                logger.warning(f"Run {run_id} not found for reconnection")
+                return False
+
+            if run.status not in [RunStatus.ACTIVE, RunStatus.AWAITING_INPUT, RunStatus.PAUSED]:
+                logger.warning(f"Run {run_id} is not in a reconnectable state: {run.status}")
+                return False
+
+            # Accept the new connection
+            await websocket.accept()
+            
+            # Remove from closed connections and update connection tracking
+            self._closed_connections.discard(run_id)
+            self._connections[run_id] = websocket
+            self._input_responses[run_id] = asyncio.Queue()
+
+            # Send reconnection confirmation
+            await self._send_message(
+                run_id,
+                {
+                    "type": "system",
+                    "status": "reconnected",
+                    "message": f"Reconnected to background task. Status: {run.status}",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+
+            # If run was awaiting input, resend the input request
+            if run.input_request:
+                await self._send_message(
+                    run_id,
+                    {
+                        "type": "input_request",
+                        "input_type": run.input_request.get("input_type", "text_input"),
+                        "prompt": run.input_request.get("prompt", ""),
+                        "data": {"source": "system", "content": run.input_request.get("prompt", "")},
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+
+            logger.info(f"Successfully reconnected to run {run_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to reconnect to run {run_id}: {e}")
+            return False

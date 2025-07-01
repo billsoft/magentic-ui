@@ -9,7 +9,7 @@
 model_config: &client
   provider: autogen_ext.models.openai.OpenAIChatCompletionClient
   config:
-    model: anthropic/claude-sonnet-4
+    model: google/gemini-2.5-pro
     api_key: $OPENROUTER_API_KEY
     base_url: https://openrouter.ai/api/v1
     timeout: 120.0
@@ -30,6 +30,34 @@ model_config: &client
       top_p: 0.9
 
 ######################################
+# 图像生成专用配置 - 使用OpenAI官方API #
+######################################
+image_generation_client: &image_client
+  provider: direct_openai_image_client  # 专用图像生成客户端标识
+  config:
+    model: dall-e-3  # 支持: dall-e-3, dall-e-2
+    api_key: $OPENAI_API_KEY  # ✅ 必须使用真正的OpenAI API密钥，OpenRouter不支持图像生成
+    base_url: https://api.openai.com/v1  # ✅ 必须使用OpenAI官方API
+    timeout: 120.0
+    max_retries: 3
+    model_info:
+      image_generation: true  # 明确标识为图像生成
+      supported_formats: ["png", "webp"]
+      quality_levels: ["standard", "hd"]
+      style_options: ["natural", "vivid"]
+      max_resolution: "1792x1024"
+      function_calling: false
+      json_output: false
+    default_headers:
+      HTTP-Referer: https://magentic-ui.local
+      X-Title: Magentic-UI-ImageGen
+    extra_body:
+      response_format: "b64_json"  # "url" or "b64_json"
+      quality: "standard"          # "standard" or "hd"
+      style: "vivid"              # "natural" or "vivid" (仅DALL-E 3)
+      size: "1024x1024"           # 默认尺寸
+
+######################################
 # 各代理专用配置                      #
 ######################################
 
@@ -38,6 +66,7 @@ coder_client: *client
 web_surfer_client: *client
 file_surfer_client: *client
 action_guard_client: *client
+image_generator: *image_client
 
 ######################################
 # 应用程序配置                        #

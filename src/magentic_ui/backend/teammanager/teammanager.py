@@ -193,6 +193,10 @@ class TeamManager:
                         "action_guard_client",
                         self.config.get("action_guard_client", None),
                     ),
+                    image_generator=settings_model_configs.get(
+                        "image_generator",
+                        self.config.get("image_generator", None),
+                    ),
                 )
 
                 config_params = {
@@ -457,3 +461,5 @@ class TeamManager:
         """Resume the run"""
         if self.team:
             await self.team.resume()
+
+

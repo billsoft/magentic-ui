@@ -34,11 +34,20 @@ async def create_session(session: Session, db=Depends(get_db)) -> Dict:
     if not session_response.status:
         raise HTTPException(status_code=400, detail=session_response.message)
 
+    # Get the actual session ID from the response (session_response.data is a dict when return_json=True)
+    created_session = session_response.data
+    if not created_session or 'id' not in created_session:
+        raise HTTPException(status_code=500, detail="Failed to get session ID from created session")
+    
+    session_id = created_session['id']
+    if not session_id:
+        raise HTTPException(status_code=500, detail="Session ID is None")
+    
     # Create associated run
     try:
         run = db.upsert(
             Run(
-                session_id=session.id,
+                session_id=session_id,  # 使用从数据库返回的实际session ID
                 status=RunStatus.CREATED,
                 user_id=session.user_id,
                 task=None,

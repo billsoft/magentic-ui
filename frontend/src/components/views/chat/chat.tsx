@@ -946,6 +946,50 @@ export default function ChatView({
     }
   };
 
+  // Add effect to detect and reconnect to background tasks
+  React.useEffect(() => {
+    const detectBackgroundTask = async () => {
+      if (!session?.id || !currentRun) return;
+
+      try {
+        // Check if there's a background task running
+        const response = await fetch(`/api/runs/${currentRun.id}`, {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.ok) {
+          const runData = await response.json();
+          if (runData.status === 'active' && !activeSocket) {
+            // There's a background task - try to reconnect
+            console.log('Detected background task, attempting reconnection...');
+            const socket = setupWebSocket(currentRun.id, true, false);
+            if (socket) {
+              // Add a message about reconnection
+              setCurrentRun((prevRun) => ({
+                ...prevRun,
+                messages: [
+                  ...prevRun.messages,
+                  {
+                    source: 'system',
+                    content: '🔄 Reconnecting to background task...',
+                    timestamp: new Date().toISOString(),
+                  },
+                ],
+              }));
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error detecting background task:', error);
+      }
+    };
+
+    // Check for background tasks when component mounts
+    detectBackgroundTask();
+  }, [session?.id, currentRun?.id, activeSocket]);
+
   if (!visible) {
     return null;
   }

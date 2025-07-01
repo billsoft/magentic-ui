@@ -298,11 +298,12 @@ export interface TeamResult {
 
 export interface Run {
   id: string;
+  session_id: number;
   created_at: string;
   updated_at?: string;
   status: RunStatus;
   input_request?: InputRequest;
-  task: AgentMessageConfig;
+  task: AgentMessageConfig | null;
   team_result: TeamResult | null;
   messages: Message[]; // Change to Message[]
   error_message?: string;

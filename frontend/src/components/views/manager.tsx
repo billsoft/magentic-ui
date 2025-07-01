@@ -17,6 +17,8 @@ import { getServerUrl } from "../utils";
 import { RunStatus } from "../types/datamodel";
 import ContentHeader from "../contentheader";
 import PlanList from "../features/Plans/PlanList";
+import BackgroundTaskIndicator from './BackgroundTaskIndicator';
+import { Run } from '../types/datamodel';
 
 interface SessionWebSocket {
   socket: WebSocket;
@@ -45,6 +47,7 @@ export const SessionManager: React.FC = () => {
   }>({});
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeSubMenuItem, setActiveSubMenuItem] = useState("current_session");
+  const [backgroundRuns, setBackgroundRuns] = useState<Run[]>([]);
 
   const { user } = useContext(appContext);
   const { session, setSession, sessions, setSessions } = useConfigStore();
@@ -454,6 +457,81 @@ export const SessionManager: React.FC = () => {
     }, 2000); // Give time for session selection to complete
   };
 
+  // 检测后台任务
+  const detectBackgroundTasks = useCallback(async () => {
+    try {
+      const allBackgroundRuns: Run[] = [];
+      
+      for (const session of sessions) {
+        if (!session.id) continue;
+        
+        try {
+          const response = await fetch(`/api/sessions/${session.id}/runs`);
+          if (response.ok) {
+            const runs = await response.json();
+            const activeTasks = runs.filter((run: Run) => 
+              run.status === 'active' || 
+              run.status === 'awaiting_input' || 
+              run.status === 'paused'
+            );
+            allBackgroundRuns.push(...activeTasks);
+          }
+        } catch (error) {
+          console.error(`Error fetching runs for session ${session.id}:`, error);
+        }
+      }
+      
+      setBackgroundRuns(allBackgroundRuns);
+    } catch (error) {
+      console.error('Error detecting background tasks:', error);
+    }
+  }, [sessions]);
+
+  // 定期检测后台任务
+  useEffect(() => {
+    detectBackgroundTasks();
+    const interval = setInterval(detectBackgroundTasks, 30000); // 每30秒检查
+    return () => clearInterval(interval);
+  }, [detectBackgroundTasks]);
+
+  const handleReconnectToTask = async (runId: number) => {
+    // 找到对应的会话
+    const targetRun = backgroundRuns.find(run => run.id === runId.toString());
+    if (!targetRun) return;
+
+    const targetSession = sessions.find(s => s.id === targetRun.session_id);
+    if (!targetSession) return;
+
+    // 切换到对应会话
+    await handleSelectSession(targetSession);
+    
+    // 刷新后台任务列表
+    await detectBackgroundTasks();
+  };
+
+  const handleStopBackgroundTask = async (runId: number) => {
+    try {
+      const response = await fetch(`/api/runs/${runId}/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Stopped by user from background task indicator' })
+      });
+      
+      if (response.ok) {
+        // 刷新后台任务列表
+        await detectBackgroundTasks();
+        messageApi.success('后台任务已停止');
+      }
+    } catch (error) {
+      console.error('Error stopping background task:', error);
+      messageApi.error('停止后台任务失败');
+    }
+  };
+
+  const handleViewTaskDetails = async (runId: number) => {
+    await handleReconnectToTask(runId);
+  };
+
   return (
     <div className="relative flex flex-col h-full w-full">
       {contextHolder}
@@ -540,6 +618,14 @@ export const SessionManager: React.FC = () => {
           }}
         />
       </div>
+
+      {/* 后台任务指示器 */}
+      <BackgroundTaskIndicator
+        runs={backgroundRuns}
+        onReconnect={handleReconnectToTask}
+        onStop={handleStopBackgroundTask}
+        onViewDetails={handleViewTaskDetails}
+      />
     </div>
   );
 };
