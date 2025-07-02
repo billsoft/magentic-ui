@@ -1861,25 +1861,58 @@ class WebSurfer(BaseChatAgent, Component[WebSurferConfig]):
         # Create the prompt with the question
         prompt = WEB_SURFER_QA_PROMPT(title, question)
 
+        # 🔧 动态获取模型真实token限制，避免硬编码
+        model_token_limit = 30000  # 默认安全值
+        if hasattr(self._model_client, 'model_info') and self._model_client.model_info:
+            # 从模型信息获取实际限制
+            reported_limit = self._model_client.model_info.get('max_tokens', 30000)
+            # 使用更保守的限制，避免429错误
+            model_token_limit = min(reported_limit, 30000)
+        
         # Truncate the page content if needed to fit within token limits
         tokenizer = tiktoken.encoding_for_model("gpt-4o")
         prompt_tokens = len(tokenizer.encode(prompt))
-        # Reserve tokens for the image (SCREENSHOT_TOKENS) and some buffer for the response
-        max_content_tokens = 128000 - self.SCREENSHOT_TOKENS - prompt_tokens - 1000
-
-        if max_content_tokens <= 0:
-            # If we don't have enough tokens, just use a minimal prompt
-            content = prompt
+        
+        # 🚨 更保守的token预算分配
+        # 为图像、响应和缓冲区预留更多tokens
+        reserved_tokens = self.SCREENSHOT_TOKENS + 2000  # 图像 + 响应缓冲
+        max_content_tokens = model_token_limit - prompt_tokens - reserved_tokens
+        
+        # 📊 额外的安全检查
+        if max_content_tokens <= 500:  # 如果可用空间太少
+            # 使用极简化内容
+            summary_content = f"Page title: {title[:100]}\nContent too large for analysis."
+            content = f"{summary_content}\n\n{prompt}"
+            self.logger.warning(f"⚠️ Token空间不足，使用简化内容 (可用:{max_content_tokens})")
         else:
             # Truncate the page content to fit within the token limit
             content_tokens = tokenizer.encode(page_markdown)
+            
             if len(content_tokens) > max_content_tokens:
-                truncated_content = tokenizer.decode(
-                    content_tokens[:max_content_tokens]
-                )
-                content = f"Page content (truncated):\n{truncated_content}\n\n{prompt}"
+                # 🔧 智能截断：保留前80%和后20%
+                keep_start = int(max_content_tokens * 0.8)
+                keep_end = max_content_tokens - keep_start
+                
+                truncated_start = tokenizer.decode(content_tokens[:keep_start])
+                truncated_end = tokenizer.decode(content_tokens[-keep_end:]) if keep_end > 0 else ""
+                
+                truncated_content = f"{truncated_start}\n\n... [CONTENT TRUNCATED] ...\n\n{truncated_end}"
+                content = f"Page content (truncated to fit token limit):\n{truncated_content}\n\n{prompt}"
+                
+                self.logger.info(f"🔧 内容截断: {len(content_tokens)} -> {max_content_tokens} tokens")
             else:
                 content = f"Page content:\n{page_markdown}\n\n{prompt}"
+
+        # 🔍 最终token验证
+        final_tokens = len(tokenizer.encode(content))
+        total_estimated = final_tokens + self.SCREENSHOT_TOKENS + 500  # 响应预留
+        
+        if total_estimated > model_token_limit:
+            # 紧急截断
+            emergency_limit = model_token_limit - self.SCREENSHOT_TOKENS - 1000
+            content_tokens = tokenizer.encode(content)[:emergency_limit]
+            content = tokenizer.decode(content_tokens)
+            self.logger.warning(f"🚨 紧急截断: {total_estimated} -> {len(content_tokens)} tokens")
 
         # Create the message with the content and image
         messages.append(
@@ -1890,14 +1923,24 @@ class WebSurfer(BaseChatAgent, Component[WebSurferConfig]):
         )
 
         # Generate the response
-        response = await self._model_client.create(
-            messages, cancellation_token=cancellation_token
-        )
-        self.model_usage.append(response.usage)
-        scaled_screenshot.close()
+        try:
+            response = await self._model_client.create(
+                messages, cancellation_token=cancellation_token
+            )
+            self.model_usage.append(response.usage)
+            scaled_screenshot.close()
 
-        assert isinstance(response.content, str)
-        return response.content
+            assert isinstance(response.content, str)
+            return response.content
+            
+        except Exception as e:
+            # 🔧 如果还是失败，返回简化摘要
+            scaled_screenshot.close()
+            error_msg = str(e)
+            if "429" in error_msg or "token" in error_msg.lower():
+                return f"Page analysis failed due to content size. Page title: {title}\nURL: {self._page.url}"
+            else:
+                raise e
 
     async def describe_current_page(self) -> tuple[str, Union[bytes, None], str]:
         """Get a description of the current page including content, screenshot and metadata hash.

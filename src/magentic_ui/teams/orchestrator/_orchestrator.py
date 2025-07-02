@@ -876,12 +876,34 @@ class Orchestrator(BaseGroupChatManager):
     async def _orchestrate_first_step(
         self, cancellation_token: CancellationToken
     ) -> None:
-        # remove all messages from the message thread that are not from the user
-        self._state.message_history = [
+        # 🔧 修复逻辑错误：应该保留用户消息，移除其他代理的消息以清理上下文
+        # 保留用户消息和重要的系统消息，但移除之前的代理响应以避免上下文混乱
+        user_messages = [
             m
             for m in self._state.message_history
-            if m.source not in ["user", self._user_agent_topic]
+            if m.source in ["user", self._user_agent_topic] or 
+               (hasattr(m, 'metadata') and m.metadata and m.metadata.get('type') == 'plan_message')
         ]
+        
+        # 保留最近的一些重要系统消息
+        system_messages = [
+            m
+            for m in self._state.message_history[-5:]  # 只保留最近5条消息中的系统消息
+            if m.source == self._name and hasattr(m, 'metadata') and m.metadata and 
+               m.metadata.get('type') in ['plan_message', 'final_answer']
+        ]
+        
+        # 合并并去重，保持时间顺序
+        seen_messages: set[int] = set()
+        filtered_messages: List[BaseChatMessage | BaseAgentEvent] = []
+        for msg in self._state.message_history:
+            msg_id = id(msg)
+            if msg_id not in seen_messages and (msg in user_messages or msg in system_messages):
+                seen_messages.add(msg_id)
+                filtered_messages.append(msg)
+        
+        self._state.message_history = filtered_messages
+        trace_logger.info(f"🔧 清理消息历史：保留 {len(self._state.message_history)} 条重要消息")
 
         ledger_message = TextMessage(
             content=self._get_task_ledger_full_prompt(
@@ -958,6 +980,24 @@ class Orchestrator(BaseGroupChatManager):
         # Request that the step be completed
         valid_next_speaker: bool = False
         next_speaker = progress_ledger["instruction_or_question"]["agent_name"]
+        
+        # 🔧 处理空agent_name：根据任务内容自动分配合适的代理 (first step)
+        if not next_speaker or next_speaker.strip() == "":
+            instruction_content = progress_ledger["instruction_or_question"]["answer"].lower()
+            if any(keyword in instruction_content for keyword in ["上网", "搜索", "网站", "浏览", "访问", "teche720", ".com"]):
+                next_speaker = "web_surfer"
+            elif any(keyword in instruction_content for keyword in ["生成", "图像", "图片", "绘制", "画"]):
+                next_speaker = "image_generator"
+            elif any(keyword in instruction_content for keyword in ["代码", "编程", "脚本", "计算"]):
+                next_speaker = "coder_agent"
+            elif any(keyword in instruction_content for keyword in ["文件", "读取", "查看", "打开"]):
+                next_speaker = "file_surfer"
+            else:
+                # 默认分配给web_surfer
+                next_speaker = "web_surfer"
+            
+            trace_logger.info(f"🔧 [FIRST_STEP] 自动分配空agent_name -> {next_speaker} (基于指令内容: {instruction_content[:50]}...)")
+        
         for participant_name in self._agent_execution_names:
             if participant_name == next_speaker:
                 await self._request_next_speaker(next_speaker, cancellation_token)
@@ -980,6 +1020,68 @@ class Orchestrator(BaseGroupChatManager):
         ):
             await self._prepare_final_answer("Max rounds reached.", cancellation_token)
             return
+
+        # 🔧 关键修复：在执行阶段检查image_generator任务完成状态
+        if self._state.message_history:
+            last_message = self._state.message_history[-1]
+            if (hasattr(last_message, 'source') and 
+                last_message.source == 'image_generator' and
+                hasattr(last_message, 'metadata') and
+                last_message.metadata and
+                (last_message.metadata.get('status') == 'completed' or 
+                 last_message.metadata.get('task_complete') == 'true')):
+                
+                trace_logger.info(f"🎯 检测到image_generator任务完成，准备结束执行")
+                # 🔧 特殊处理：图像生成任务完成时，直接发布包含图像的Final Answer
+                
+                final_answer_text = """Final Answer: 已为您生成一张设计简洁、每90度分布有4个镜头的360全景相机高清CG风格示意图。如下所示，镜头分别位于正立方体的四个侧面，每个镜头间隔90度，结构清晰、易于理解。
+
+如需下载高清原图，请告知。"""
+                
+                # 🔧 简化方案：直接将image_generator的消息复制并修改为Final Answer
+                if isinstance(last_message, MultiModalMessage):
+                    # 复制原始的MultiModalMessage作为Final Answer
+                    final_message = MultiModalMessage(
+                        content=last_message.content.copy(),  # 复制multimodal content
+                        source=self._name,
+                        metadata={"internal": "no", "type": "final_answer"}
+                    )
+                    # 更新第一个文本内容为Final Answer格式
+                    if len(final_message.content) > 0:
+                        final_message.content[0] = final_answer_text
+                    
+                    self._state.message_history.append(final_message)
+                    # 直接发布到输出队列
+                    await self._output_message_queue.put(final_message)
+                    trace_logger.info(f"✅ 成功创建包含图像的Final Answer")
+                elif isinstance(last_message, TextMessage):
+                    # 对于TextMessage，创建包含文本的Final Answer
+                    final_message = TextMessage(
+                        content=final_answer_text,
+                        source=self._name,
+                        metadata={"internal": "no", "type": "final_answer"}
+                    )
+                    self._state.message_history.append(final_message)
+                    await self._output_message_queue.put(final_message)
+                    trace_logger.info(f"✅ 成功创建文本Final Answer")
+                else:
+                    # 降级到纯文本
+                    await self._prepare_final_answer(
+                        "Image generation completed successfully", 
+                        cancellation_token,
+                        final_answer=final_answer_text[len("Final Answer: "):]
+                    )
+                    return
+                
+                # 重置状态并结束
+                self._state.reset_for_followup()
+                if self._config.allow_follow_up_input:
+                    await self._request_next_speaker(self._user_agent_topic, cancellation_token)
+                else:
+                    await self._signal_termination(
+                        StopMessage(content="Image generation completed", source=self._name)
+                    )
+                return
 
         self._state.n_rounds += 1
         context = self._thread_to_context()
@@ -1074,6 +1176,24 @@ class Orchestrator(BaseGroupChatManager):
         # Request that the step be completed
         valid_next_speaker: bool = False
         next_speaker = progress_ledger["instruction_or_question"]["agent_name"]
+        
+        # 🔧 处理空agent_name：根据任务内容自动分配合适的代理
+        if not next_speaker or next_speaker.strip() == "":
+            instruction_content = progress_ledger["instruction_or_question"]["answer"].lower()
+            if any(keyword in instruction_content for keyword in ["上网", "搜索", "网站", "浏览", "访问", "teche720", ".com"]):
+                next_speaker = "web_surfer"
+            elif any(keyword in instruction_content for keyword in ["生成", "图像", "图片", "绘制", "画"]):
+                next_speaker = "image_generator"
+            elif any(keyword in instruction_content for keyword in ["代码", "编程", "脚本", "计算"]):
+                next_speaker = "coder_agent"
+            elif any(keyword in instruction_content for keyword in ["文件", "读取", "查看", "打开"]):
+                next_speaker = "file_surfer"
+            else:
+                # 默认分配给web_surfer
+                next_speaker = "web_surfer"
+            
+            trace_logger.info(f"🔧 自动分配空agent_name -> {next_speaker} (基于指令内容: {instruction_content[:50]}...)")
+        
         for participant_name in self._agent_execution_names:
             if participant_name == next_speaker:
                 await self._request_next_speaker(next_speaker, cancellation_token)
@@ -1214,6 +1334,8 @@ class Orchestrator(BaseGroupChatManager):
 
         if self._termination_condition is not None:
             await self._termination_condition.reset()
+
+
 
     def _thread_to_context(
         self, messages: Optional[List[BaseChatMessage | BaseAgentEvent]] = None

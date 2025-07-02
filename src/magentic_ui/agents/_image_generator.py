@@ -104,12 +104,12 @@ class ImageGeneratorAgent(BaseChatAgent):
             logger.info(f"🚀 开始生成图像...")
             logger.info(f"📝 优化后提示词: {optimized_prompt}")
             
-            # 配置图像生成参数
+            # 🚀 2025最新DALL-E 3最佳配置
             config = ImageGenerationConfig(
-                model="dall-e-3",
-                size="1024x1024",
-                quality="standard",
-                style="vivid"
+                model="dall-e-3",  # ✅ 确认使用最新版本
+                size="1792x1024",  # 🔧 横向格式，更适合产品展示
+                quality="hd",      # 🔧 高清模式，更佳细节
+                style="vivid"      # 🔧 戏剧化风格，更生动
             )
             
             # 🔧 关键：直接调用图像生成API
@@ -140,57 +140,111 @@ class ImageGeneratorAgent(BaseChatAgent):
             return self._create_text_response(f"图像生成过程出错: {str(e)}")
     
     def _optimize_prompt(self, request: str) -> str:
-        """智能优化提示词，基于成功测试经验"""
+        """🎨 智能提示词优化系统 - 根据用户需求自动选择最佳绘图风格"""
         enhanced_parts = []
-        
-        # 🎯 核心需求（保持用户原意）
-        enhanced_parts.append(request)
-        
-        # 🔧 基础质量增强（基于DALL-E最佳实践）
-        quality_base = [
-            "high quality", "detailed", "professional grade", 
-            "sharp focus", "well-lit", "ultra-detailed"
-        ]
-        enhanced_parts.extend(quality_base)
-        
-        # 🎨 根据内容类型添加专业描述
         request_lower = request.lower()
         
-        # 产品摄影风格
-        if any(word in request_lower for word in ["相机", "camera", "产品", "product", "设备", "device"]):
-            product_style = [
-                "product photography", "studio lighting", "clean background",
-                "commercial photography", "perfect lighting", "professional product shot"
-            ]
-            enhanced_parts.extend(product_style)
+        # 🎯 风格识别矩阵
+        style_keywords = {
+            "简图": ["简图", "简单", "简洁", "线条图", "示意图", "草图", "概念图"],
+            "线条图": ["线条", "线稿", "轮廓", "素描", "手绘", "铅笔画"],
+            "3D渲染": ["3d", "三维", "立体", "渲染", "建模", "cg", "三d"],
+            "照片级": ["照片", "真实", "高清", "写实", "逼真", "实物", "产品图"],
+            "科技风": ["科技", "未来", "科幻", "电子", "数字", "智能", "现代"],
+            "工业设计": ["工业", "产品设计", "设计图", "专业", "产品"],
+            "概念艺术": ["概念", "艺术", "创意", "想象", "幻想"]
+        }
         
-        # 全景相机特殊优化
-        if any(word in request_lower for word in ["全景", "panoramic", "360", "镜头", "lens"]):
-            panoramic_style = [
-                "modern camera design", "sleek technology", "multiple lens system",
-                "premium electronics", "cutting-edge technology"
-            ]
-            enhanced_parts.extend(panoramic_style)
+        # 🔍 识别用户偏好的绘图风格
+        detected_styles = []
+        for style, keywords in style_keywords.items():
+            if any(keyword in request_lower for keyword in keywords):
+                detected_styles.append(style)
         
-        # 艺术创作风格
-        elif any(word in request_lower for word in ["艺术", "art", "创意", "creative", "概念", "concept"]):
-            artistic_style = [
-                "artistic composition", "creative design", "conceptual art",
-                "masterpiece quality", "award-winning design"
+        # 🖼️ 特殊主题优化（全景相机、折叠手机等）
+        if any(word in request_lower for word in ["全景相机", "全景", "panoramic camera", "360相机", "4镜头", "四镜头", "多镜头"]):
+            panoramic_desc = [
+                "A professional 360-degree panoramic camera with exactly 4 visible camera lenses",
+                "spherical or cylindrical body design specifically for panoramic photography", 
+                "four distinct ultra-wide-angle lenses positioned strategically around the device",
+                "modern VR camera technology for immersive content creation",
+                "compact multi-lens system with visible lens details and professional grade build quality"
             ]
-            enhanced_parts.extend(artistic_style)
+            enhanced_parts.extend(panoramic_desc)
+            
+        elif any(word in request_lower for word in ["折叠屏", "折叠手机", "foldable", "fold", "flip", "多屏", "4屏"]):
+            foldable_desc = [
+                "Advanced foldable smartphone with multiple flexible OLED screens",
+                "innovative hinge mechanism and seamless folding design",
+                "multiple screen panels that unfold into larger display surface",
+                "premium materials with sophisticated engineering details",
+                "next-generation mobile device technology showcase"
+            ]
+            enhanced_parts.extend(foldable_desc)
         
-        # 摄影技术增强
-        photo_tech = [
-            "8k resolution", "photorealistic", "cinematic lighting",
-            "perfect composition", "professional photography"
+        # 🎨 根据检测到的风格应用相应的提示词增强
+        style_enhancements = {
+            "简图": [
+                "simple line drawing", "clean minimal design", "schematic style",
+                "basic shapes and lines", "technical diagram aesthetic",
+                "clear and uncluttered composition"
+            ],
+            "线条图": [
+                "detailed line art", "precise linework", "technical drawing style", 
+                "engineering blueprint aesthetic", "clean vector graphics",
+                "professional technical illustration"
+            ],
+            "3D渲染": [
+                "high-quality 3D render", "advanced 3D modeling", "realistic materials and textures",
+                "professional 3D visualization", "cinema 4d style rendering",
+                "volumetric lighting and ray tracing effects"
+            ],
+            "照片级": [
+                "photorealistic rendering", "studio photography lighting", "commercial product photography",
+                "ultra-high definition details", "professional camera setup",
+                "perfect focus and depth of field"
+            ],
+            "科技风": [
+                "futuristic technology design", "sleek modern aesthetics", "digital interface elements",
+                "holographic effects", "neon accent lighting", "advanced sci-fi styling"
+            ],
+            "工业设计": [
+                "professional industrial design", "premium materials showcase", "ergonomic form factor",
+                "manufacturing precision details", "contemporary product design language",
+                "design excellence and innovation"
+            ],
+            "概念艺术": [
+                "concept art style", "creative artistic interpretation", "imaginative design exploration",
+                "artistic vision and creativity", "unique aesthetic approach",
+                "visionary design concepts"
+            ]
+        }
+        
+        # ✨ 应用检测到的风格增强
+        for style in detected_styles:
+            if style in style_enhancements:
+                enhanced_parts.extend(style_enhancements[style])
+        
+        # 🏆 默认高质量基础增强（如果没有特定风格）
+        if not detected_styles:
+            default_enhancements = [
+                "high quality", "detailed", "professional grade", "sharp focus", 
+                "well-lit", "ultra-detailed", "8k resolution", "photorealistic",
+                "cinematic lighting", "perfect composition", "professional photography"
+            ]
+            enhanced_parts.extend(default_enhancements)
+        
+        # 🌈 通用质量增强词汇
+        quality_boost = [
+            "crisp details", "vibrant colors", "excellent craftsmanship",
+            "premium quality", "cutting-edge design", "innovative technology",
+            "state-of-the-art engineering", "world-class aesthetics"
         ]
-        enhanced_parts.extend(photo_tech)
+        enhanced_parts.extend(quality_boost)
         
-        # 🎭 最终优化：去重并构建
-        final_prompt = ", ".join(dict.fromkeys(enhanced_parts))  # 去重
+        # 🔧 组合最终提示词
+        final_prompt = f"{request.strip()}, {', '.join(enhanced_parts)}"
         
-        logger.info(f"📝 提示词优化: {request} → {final_prompt[:100]}...")
         return final_prompt
     
     async def _download_and_encode_image(self, image_url: str) -> str:
@@ -206,29 +260,41 @@ class ImageGeneratorAgent(BaseChatAgent):
     
     def _create_multimodal_response(self, original_request: str, result: ImageGenerationResult, prompt: str) -> Response:
         """创建包含图像的多模态响应"""
-        # 🔧 关键修复：构建前端能理解的格式
-        text_content = f"""✅ **图像生成完成**
+        # 🔧 关键修复：构建前端能理解的格式，并明确标识任务完成
+        text_content = f"""✅ **图像生成任务已完成**
 
-**原始需求**: {original_request}
-**优化提示词**: {prompt}
-**生成模型**: {result.model_used}
-**生成时间**: {result.generation_time:.2f}秒"""
+🎯 **任务状态**: COMPLETED
+📋 **原始需求**: {original_request}
+🚀 **生成结果**: 成功生成高质量图像
+📝 **优化提示词**: {prompt[:100]}{"..." if len(prompt) > 100 else ""}
+🤖 **生成模型**: {result.model_used}
+⏱️ **生成时间**: {result.generation_time:.2f}秒
+
+图像已成功生成并准备显示。"""
         
-        # 🔧 核心：直接创建前端期望的ImageContent格式
+        # 🔧 核心修复：同时设置url和data字段，确保前端兼容性
         image_content = {
-            "data": result.image_data,  # 直接传递base64数据
-            "alt": f"4镜头全景相机" if "全景相机" in original_request else f"Generated: {original_request[:30]}..."
+            "url": f"data:image/png;base64,{result.image_data}",  # 🔧 设置完整的data URL
+            "data": result.image_data,  # 🔧 保留原始base64数据
+            "alt": f"Generated image: {original_request[:50]}..." if len(original_request) > 50 else f"Generated: {original_request}"
         }
         
         # 🔧 构建MultiModalMessage，content为[string, dict]格式
         content = [text_content, image_content]
         
         logger.info(f"📤 返回多模态消息 - 文本长度: {len(text_content)}, 图像数据长度: {len(result.image_data)}")
+        logger.info(f"🖼️ 图像格式: data URL长度={len(image_content['url'])}, base64长度={len(result.image_data)}")
+        logger.info(f"🎯 任务完成信号已发送: COMPLETED")
         
         return Response(chat_message=MultiModalMessage(
             content=content,
             source=self.name,
-            metadata={"type": "image_generation", "internal": "no"}
+            metadata={
+                "type": "image_generation", 
+                "status": "completed",  # 🔧 明确的完成状态
+                "task_complete": "true",  # 🔧 修复：使用字符串而非布尔值
+                "internal": "no"
+            }
         ))
     
     def _create_text_response(self, text: str) -> Response:

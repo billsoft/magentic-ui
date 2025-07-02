@@ -133,8 +133,17 @@ def thread_to_context(
         elif isinstance(m, StopMessage | HandoffMessage):
             context.append(UserMessage(content=m.content, source=m.source))
         elif m.source == agent_name:
-            assert isinstance(m, TextMessage), f"{type(m)}"
-            context.append(AssistantMessage(content=m.content, source=m.source))
+            assert isinstance(m, TextMessage | MultiModalMessage), f"{type(m)}"
+            if isinstance(m, MultiModalMessage):
+                # 对于MultiModalMessage，只使用文本内容
+                if isinstance(m.content, list) and len(m.content) > 0:
+                    # 提取第一个文本内容
+                    text_content = next((item for item in m.content if isinstance(item, str)), str(m.content))
+                    context.append(AssistantMessage(content=text_content, source=m.source))
+                else:
+                    context.append(AssistantMessage(content=str(m.content), source=m.source))
+            else:
+                context.append(AssistantMessage(content=m.content, source=m.source))
         elif m.source == "user_proxy" or m.source == "user":
             assert isinstance(m, TextMessage | MultiModalMessage), f"{type(m)}"
             if isinstance(m.content, str):

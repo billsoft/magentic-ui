@@ -639,6 +639,7 @@ class WebSocketManager:
                         message_content.append(
                             {
                                 "url": f"data:image/png;base64,{row['data']}",
+                                "data": row['data'],  # 🔧 保留原始base64数据
                                 "alt": alt_text,
                             }
                         )
