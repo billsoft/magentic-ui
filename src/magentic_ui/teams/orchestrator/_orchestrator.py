@@ -47,14 +47,14 @@ from ...utils import dict_to_str, thread_to_context
 from ...tools.bing_search import get_bing_search_results
 from ...teams.orchestrator.orchestrator_config import OrchestratorConfig
 from ._prompts import (
-    ORCHESTRATOR_SYSTEM_MESSAGE_PLANNING,
-    ORCHESTRATOR_SYSTEM_MESSAGE_PLANNING_AUTONOMOUS,
+    get_orchestrator_system_message_planning,
+    get_orchestrator_system_message_planning_autonomous,
+    get_orchestrator_plan_prompt_json,
+    get_orchestrator_plan_replan_json,
+    get_orchestrator_progress_ledger_prompt,
     ORCHESTRATOR_SYSTEM_MESSAGE_EXECUTION,
     ORCHESTRATOR_FINAL_ANSWER_PROMPT,
-    ORCHESTRATOR_PROGRESS_LEDGER_PROMPT,
     ORCHESTRATOR_TASK_LEDGER_FULL_FORMAT,
-    ORCHESTRATOR_PLAN_PROMPT_JSON,
-    ORCHESTRATOR_PLAN_REPLAN_JSON,
     INSTRUCTION_AGENT_FORMAT,
     validate_ledger_json,
     validate_plan_json,
@@ -278,12 +278,16 @@ class Orchestrator(BaseGroupChatManager):
     ) -> str:
         date_today = datetime.now().strftime("%Y-%m-%d")
         if self._config.autonomous_execution:
-            return ORCHESTRATOR_SYSTEM_MESSAGE_PLANNING_AUTONOMOUS.format(
+            return get_orchestrator_system_message_planning_autonomous(
+                self._config.sentinel_tasks
+            ).format(
                 date_today=date_today,
                 team=self._team_description,
             )
         else:
-            return ORCHESTRATOR_SYSTEM_MESSAGE_PLANNING.format(
+            return get_orchestrator_system_message_planning(
+                self._config.sentinel_tasks
+            ).format(
                 date_today=date_today,
                 team=self._team_description,
             )
@@ -296,7 +300,7 @@ class Orchestrator(BaseGroupChatManager):
                 + ", ".join(self._config.allowed_websites)
             )
 
-        return ORCHESTRATOR_PLAN_PROMPT_JSON.format(
+        return get_orchestrator_plan_prompt_json(self._config.sentinel_tasks).format(
             team=team, additional_instructions=additional_instructions
         )
 
@@ -309,7 +313,7 @@ class Orchestrator(BaseGroupChatManager):
                 "Only use the following websites if possible: "
                 + ", ".join(self._config.allowed_websites)
             )
-        return ORCHESTRATOR_PLAN_REPLAN_JSON.format(
+        return get_orchestrator_plan_replan_json(self._config.sentinel_tasks).format(
             task=task,
             team=team,
             plan=plan,
@@ -329,23 +333,29 @@ class Orchestrator(BaseGroupChatManager):
         if self._config.autonomous_execution:
             additional_instructions = "VERY IMPORTANT: The next agent name cannot be the user or user_proxy, use any other agent."
         
-        # 🔧 增强：添加上下文感知信息和边界警告
-        context_summary = self._generate_context_summary(step_index)
-        boundaries = self._state.task_boundaries.get(step_index, {})
-        
+        # 🔧 增强：添加上下文感知信息和边界警告（保留自定义功能）
         enhanced_instructions = additional_instructions
-        if boundaries:
-            boundary_info = "\n\n🔧 **当前步骤边界限制**:\n"
-            boundary_info += f"- 最大操作数: {boundaries.get('max_actions', 5)}\n"
-            boundary_info += f"- 时间限制: {boundaries.get('time_limit', 300)}秒\n"
-            boundary_info += f"- 当前操作数: {self._state.current_step_agent_response_count}\n"
-            if boundaries.get('success_criteria'):
-                boundary_info += f"- 成功标准: {', '.join(boundaries['success_criteria'])}\n"
-            enhanced_instructions += boundary_info
         
-        enhanced_instructions += f"\n\n🔧 **执行上下文**:\n{context_summary}"
+        # 检查是否有自定义的上下文生成功能
+        if hasattr(self, '_generate_context_summary') and hasattr(self._state, 'task_boundaries'):
+            context_summary = self._generate_context_summary(step_index)
+            boundaries = self._state.task_boundaries.get(step_index, {})
+            
+            if boundaries:
+                boundary_info = "\n\n🔧 **当前步骤边界限制**:\n"
+                boundary_info += f"- 最大操作数: {boundaries.get('max_actions', 5)}\n"
+                boundary_info += f"- 时间限制: {boundaries.get('time_limit', 300)}秒\n"
+                boundary_info += f"- 当前操作数: {self._state.current_step_agent_response_count}\n"
+                if boundaries.get('success_criteria'):
+                    boundary_info += f"- 成功标准: {', '.join(boundaries['success_criteria'])}\n"
+                enhanced_instructions += boundary_info
+            
+            enhanced_instructions += f"\n\n🔧 **执行上下文**:\n{context_summary}"
         
-        return ORCHESTRATOR_PROGRESS_LEDGER_PROMPT.format(
+        # 使用官方更新的函数（包含sentinel_tasks支持）
+        return get_orchestrator_progress_ledger_prompt(
+            self._config.sentinel_tasks
+        ).format(
             task=task,
             plan=plan,
             step_index=step_index,
@@ -440,7 +450,7 @@ class Orchestrator(BaseGroupChatManager):
         return validate_ledger_json(json_response, self._agent_execution_names)
 
     def _validate_plan_json(self, json_response: Dict[str, Any]) -> bool:
-        return validate_plan_json(json_response)
+        return validate_plan_json(json_response, self._config.sentinel_tasks)
 
     # 🔧 新增：步骤状态管理辅助方法
     def _init_step_status(self, step_idx: int) -> None:

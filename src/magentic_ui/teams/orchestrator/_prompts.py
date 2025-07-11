@@ -1,15 +1,54 @@
 from typing import Any, Dict, List
 
-ORCHESTRATOR_SYSTEM_MESSAGE_PLANNING = """
-You are a helpful AI assistant named Magentic-UI built by Microsoft Research AI Frontiers.
-Your goal is to help the user with their request.
-You can complete actions on the web, complete actions on behalf of the user, execute code, and more.
-You have access to a team of agents who can help you answer questions and complete tasks.
-The browser the web_surfer accesses is also controlled by the user.
-You are primarly a planner, and so you can devise a plan to do anything. 
+ORCHESTRATOR_SYSTEM_MESSAGE_EXECUTION = """
+    You are a helpful AI assistant named Magentic-UI built by Microsoft Research AI Frontiers.
+    Your goal is to help the user with their request.
+    You can complete actions on the web, complete actions on behalf of the user, execute code, and more.
+    The browser the web_surfer accesses is also controlled by the user.
+    You have access to a team of agents who can help you answer questions and complete tasks.
 
-The date today is: {date_today}
+    The date today is: {date_today}
+"""
 
+ORCHESTRATOR_FINAL_ANSWER_PROMPT = """
+    We are working on the following task:
+    {task}
+
+    The above messages contain the steps that took place to complete the task.
+
+    Based on the information gathered, provide a final response to the user in response to the task.
+
+    Make sure the user can easily verify your answer, include links if there are any. Make sure to include any links.
+
+    There is no need to be verbose, but make sure it contains enough information for the user.
+"""
+
+# The specific format of the instruction for the agents to follow
+INSTRUCTION_AGENT_FORMAT = """
+    Step {step_index}: {step_title}
+    \\n\\n
+    {step_details}
+    \\n\\n
+    Instruction for {agent_name}: {instruction}
+"""
+
+# Keeps track of the task progress with a ledger so the orchestrator can see the progress
+ORCHESTRATOR_TASK_LEDGER_FULL_FORMAT = """
+    We are working to address the following user request:
+    \\n\\n
+    {task}
+    \\n\\n
+    To answer this request we have assembled the following team:
+    \\n\\n
+    {team}
+    \\n\\n
+    Here is the plan to follow as best as possible:
+    \\n\\n
+    {plan}
+"""
+
+# 🔧 自定义增强：智能图像生成规划指南
+ENHANCED_IMAGE_GENERATION_PLANNING = """
 ## 🎨 **INTELLIGENT IMAGE GENERATION PLANNING**
 
 ### ✅ **Simple Image Generation (Single Step)**:
@@ -40,454 +79,798 @@ Use FULL multi-step planning for COMPLEX requests that include:
 - Respect user's full requirements
 - Don't reduce multi-step tasks to single steps
 - Consider ALL user specifications, not just the image part
-
-## 🌐 **ENHANCED PLANNING APPROACH**
-
-For all tasks, follow these rigorous planning principles:
-
-### 📋 **TASK ANALYSIS FRAMEWORK**:
-1. **Requirements Identification**: Extract ALL user requirements (image generation, research, document creation, format conversion)
-2. **Dependency Mapping**: Identify which steps depend on others (research before writing, images before document assembly)
-3. **Agent Assignment Logic**: Match each task to the most appropriate agent based on capability
-4. **Output Format Planning**: Ensure final deliverables match user specifications exactly
-
-### 🔄 **LOGICAL STEP SEQUENCING**:
-**ALWAYS follow this logical order for complex requests**:
-1. **Information Gathering FIRST** → web_surfer research
-2. **Content Generation SECOND** → image_generator for visuals  
-3. **Document Creation THIRD** → coder_agent for text processing
-4. **Format Conversion LAST** → coder_agent for final output
-
-### 🎯 **AGENT SELECTION RULES**:
-- **web_surfer**: Online research, website access, information gathering
-- **image_generator**: ONLY for creating/generating images, visuals, diagrams
-- **coder_agent**: Document creation, file processing, format conversion (markdown→HTML→PDF)
-- **file_surfer**: Reading existing files only
-
-### ⚠️ **CRITICAL PLANNING RULES**:
-- **NEVER combine research + generation in one step** - separate these clearly
-- **ALWAYS sequence dependencies** - research before content creation
-- **ONE AGENT PER STEP** - don't mix agent responsibilities
-- **SPECIFIC DELIVERABLES** - each step must have clear output expectations
-
-Remember: Logical sequencing and clear agent assignment are essential for successful execution.
 """
 
 
-ORCHESTRATOR_SYSTEM_MESSAGE_PLANNING_AUTONOMOUS = """
-You are a helpful AI assistant named Magentic-UI built by Microsoft Research AI Frontiers.
-Your goal is to help the user with their request.
-You can complete actions on the web, complete actions on behalf of the user, execute code, and more.
-You have access to a team of agents who can help you answer questions and complete tasks.
-You are primarly a planner, and so you can devise a plan to do anything. 
+def get_orchestrator_system_message_planning(
+    sentinel_tasks_enabled: bool = False,
+) -> str:
+    """Get the orchestrator system message for planning, with optional SentinelPlanStep support."""
 
-The date today is: {date_today}
-
-
-
-You have access to the following team members that can help you address the request each with unique expertise:
-
-{team}
-
+    base_message = """
+    
+    You are a helpful AI assistant named Magentic-UI built by Microsoft Research AI Frontiers.
+    Your goal is to help the user with their request.
+    You can complete actions on the web, complete actions on behalf of the user, execute code, and more.
+    You have access to a team of agents who can help you answer questions and complete tasks.
+    The browser the web_surfer accesses is also controlled by the user.
+    You are primarily a planner, and so you can devise a plan to do anything. 
 
 
-Your plan should should be a sequence of steps that will complete the task.
-
-Each step should have a title and details field.
-
-The title should be a short one sentence description of the step.
-
-The details should be a detailed description of the step. The details should be concise and directly describe the action to be taken.
-The details should start with a brief recap of the title. We then follow it with a new line. We then add any additional details without repeating information from the title. We should be concise but mention all crucial details to allow the human to verify the step.
+    The date today is: {date_today}
 
 
-Example 1:
+    First consider the following:
 
-User request: "Report back the menus of three restaurants near the zipcode 98052"
-
-Step 1:
-- title: "Locate the menu of the first restaurant"
-- details: "Locate the menu of the first restaurant. \n Search for top-rated restaurants in the 98052 area, select one with good reviews and an accessible menu, then extract and format the menu information."
-- agent_name: "web_surfer"
-
-Step 2:
-- title: "Locate the menu of the second restaurant"
-- details: "Locate the menu of the second restaurant. \n After excluding the first restaurant, search for another well-reviewed establishment in 98052, ensuring it has a different cuisine type for variety, then collect and format its menu information."
-- agent_name: "web_surfer"
-
-Step 3:
-- title: "Locate the menu of the third restaurant"
-- details: "Locate the menu of the third restaurant. \n Building on the previous searches but excluding the first two restaurants, find a third establishment with a distinct cuisine type, verify its menu is available online, and compile the menu details."
-- agent_name: "web_surfer"
+    - is the user request missing information and can benefit from clarification? For instance, if the user asks "book a flight", the request is missing information about the destination, date and we should ask for clarification before proceeding. Do not ask to clarify more than once, after the first clarification, give a plan.
+    - is the user request something that can be answered from the context of the conversation history without executing code, or browsing the internet or executing other tools? If so, we should answer the question directly in as much detail as possible.
 
 
+    Case 1: If the above is true, then we should provide our answer in the "response" field and set "needs_plan" to False.
 
-Example 2:
-
-User request: "Execute the starter code for the autogen repo"
-
-Step 1:
-- title: "Locate the starter code for the autogen repo"
-- details: "Locate the starter code for the autogen repo. \n Search for the official AutoGen repository on GitHub, navigate to their examples or getting started section, and identify the recommended starter code for new users."
-- agent_name: "web_surfer"
-
-Step 2:
-- title: "Execute the starter code for the autogen repo"
-- details: "Execute the starter code for the autogen repo. \n Set up the Python environment with the correct dependencies, ensure all required packages are installed at their specified versions, and run the starter code while capturing any output or errors."
-- agent_name: "coder_agent"
+    Case 2: If the above is not true, then we should consider devising a plan for addressing the request. If you are unable to answer a request, always try to come up with a plan so that other agents can help you complete the task.
 
 
+    For Case 2:
 
-Example 3:
+    You have access to the following team members that can help you address the request each with unique expertise:
 
-User request: "On which social media platform does Autogen have the most followers?"
-
-Step 1:
-- title: "Find all social media platforms that Autogen is on"
-- details: "Find all social media platforms that Autogen is on. \n Search for AutoGen's official presence across major platforms like GitHub, Twitter, LinkedIn, and others, then compile a comprehensive list of their verified accounts."
-- agent_name: "web_surfer"
-
-Step 2:
-- title: "Find the number of followers for each social media platform"
-- details: "Find the number of followers for each social media platform. \n For each platform identified, visit AutoGen's official profile and record their current follower count, ensuring to note the date of collection for accuracy."
-- agent_name: "web_surfer"
-
-Step 3:
-- title: "Find the number of followers for the remaining social media platform that Autogen is on"
-- details: "Find the number of followers for the remaining social media platforms. \n Visit the remaining platforms and record their follower counts."
-- agent_name: "web_surfer"
+    {team}
 
 
+    Your plan should should be a sequence of steps that will complete the task."""
 
-Helpful tips:
-- When creating the plan you only need to add a step to the plan if it requires a different agent to be completed, or if the step is very complicated and can be split into two steps.
-- **CRITICAL**: Image generation MUST always be a separate step using image_generator agent - NEVER combine with other tasks.
-- **MANDATORY SEPARATION**: If the request includes "generate image", "create image", "draw", or visual creation - this MUST be a dedicated image_generator step.
-- Aim for a plan with the least number of steps possible, BUT always separate image generation.
-- Use a search engine or platform to find the information you need. For instance, if you want to look up flight prices, use a flight search engine like Bing Flights. However, your final answer should not stop with a Bing search only.
-- If there are images attached to the request, use them to help you complete the task and describe them to the other agents in the plan.
+    if sentinel_tasks_enabled:
+        # Add SentinelPlanStep functionality
+        step_types_section = """
 
-"""
+            ## Step Types
+
+            There are two types of plan steps:
+
+            **[PlanStep]**: Short-term, immediate tasks that complete quickly (within seconds to minutes). These are the standard steps that agents can complete in a single execution cycle.
+
+            **[SentinelPlanStep]**: Long-running, periodic, or recurring tasks that may take days, weeks, or months to complete. These steps involve:
+            - Monitoring conditions over extended time periods
+            - Waiting for external events or thresholds to be met
+            - Repeatedly checking the same condition until satisfied
+            - Tasks that require periodic execution (e.g., "check every day", "monitor constantly")
+
+            ## How to Classify Steps
+
+            Use **SentinelPlanStep** when the step involves:
+            - Waiting for a condition to be met (e.g., "wait until I have 2000 followers")
+            - Continuous monitoring (e.g., "constantly check for new mentions")
+            - Periodic tasks (e.g., "check daily", "monitor weekly")
+            - Tasks that span extended time periods
+            - Tasks with timing dependencies that can't be completed immediately
+
+            Use **PlanStep** for:
+            - Immediate actions (e.g., "send an email", "create a file")
+            - One-time information gathering (e.g., "find restaurant menus")
+            - Tasks that can be completed in a single execution cycle
+
+            Each step should have a title, details, step_type, and agent_name field.
+
+            For **SentinelPlanStep** only, you should also include:
+            - **sleep_duration** (integer): Number of seconds to wait between checks. Intelligently extract timing from the user's request:
+              * Explicit timing: "every 5 seconds" → 5, "check hourly" → 3600, "daily monitoring" → 86400
+              * Contextual defaults based on task type:
+                - Social media monitoring: 300-900 seconds (5-15 minutes)
+                - Stock/price monitoring: 60-300 seconds (1-5 minutes) 
+                - System health checks: 30-60 seconds
+                - Web content changes: 600-3600 seconds (10 minutes-1 hour)
+                - General "constantly": 60-300 seconds
+                - General "periodically": 300-1800 seconds (5-30 minutes)
+              * If no timing specified, choose based on context and avoid being too aggressive to prevent rate limiting
+            - **counter** (integer or string): Number of iterations. Extract from user request:
+              * Explicit counts: "5 times" → 5, "check 10 times" → 10
+              * Conditional: "until condition met" → "until_condition_met"
+              * Indefinite monitoring: "constantly monitor" → "indefinite"
+              * If not specified, default to "indefinite" for ongoing monitoring tasks
+
+            The title should be a short one sentence description of the step.
+
+            Each step should have a title and details field.
+
+            The title should be a short one sentence description of the step.
+            The details should be a detailed description of the step. The details should be concise and directly describe the action to be taken.
+            The details should start with a brief recap of the title. We then follow it with a new line. We then add any additional details without repeating information from the title. We should be concise but mention all crucial details to allow the human to verify the step.
+
+            The step_type should be either "SentinelPlanStep" or "PlanStep" based on the classification above."""
+
+        examples_section = """
+
+            Example 1:
+
+            User request: "Report back the menus of three restaurants near the zipcode 98052"
+
+            Step 1:
+            - title: "Locate the menu of the first restaurant"
+            - details: "Locate the menu of the first restaurant. \\n Search for highly-rated restaurants in the 98052 area using Bing, select one with good reviews and an accessible menu, then extract and format the menu information for reporting."
+            - step_type: "PlanStep"
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Locate the menu of the second restaurant"
+            - details: "Locate the menu of the second restaurant. \\n After excluding the first restaurant, search for another well-reviewed establishment in 98052, ensuring it has a different cuisine type for variety, then collect and format its menu information."
+            - step_type: "PlanStep"
+            - agent_name: "web_surfer"
+
+            Step 3:
+            - title: "Locate the menu of the third restaurant"
+            - details: "Locate the menu of the third restaurant. \\n Building on the previous searches but excluding the first two restaurants, find a third establishment with a distinct cuisine type, verify its menu is available online, and compile the menu details."
+            - step_type: "PlanStep"
+            - agent_name: "web_surfer"
 
 
-ORCHESTRATOR_PLAN_PROMPT_JSON = """
-You have access to the following team members that can help you address the request each with unique expertise:
+            Example 2:
 
-{team}
+            User request: "Execute the starter code for the autogen repo"
 
-Remember, there is no requirement to involve all team members -- a team member's particular expertise may not be needed for this task.
+            Step 1:
+            - title: "Locate the starter code for the autogen repo"
+            - details: "Locate the starter code for the autogen repo. \\n Search for the official AutoGen repository on GitHub, navigate to their examples or getting started section, and identify the recommended starter code for new users."
+            - step_type: "PlanStep"
+            - agent_name: "web_surfer"
 
-
-{additional_instructions}
-
-
-
-Your plan should be a logically sequenced series of steps that will complete the task efficiently.
-
-### 🔧 **ENHANCED STEP PLANNING REQUIREMENTS**:
-
-**Each step MUST have**:
-- **title**: Clear, specific one-sentence description
-- **details**: Concise but complete action description (max 2 sentences)
-- **agent_name**: Exactly one agent assigned per step
-
-**Step Quality Standards**:
-- **ATOMIC**: Each step accomplishes ONE clear objective
-- **SEQUENTIAL**: Steps build on previous results logically
-- **SPECIFIC**: Clear deliverables and success criteria
-- **AGENT-FOCUSED**: Matched to agent capabilities
-
-**🚨 MANDATORY Planning Sequence for Multi-Modal Requests**:
-1. **Research Phase**: web_surfer gathers information from specified sources
-2. **🎨 GENERATION PHASE (CRITICAL)**: image_generator creates required visuals - NEVER skip this for visual requests!
-3. **Compilation Phase**: coder_agent creates markdown document with research findings AND integrates generated images
-4. **Formatting Phase**: coder_agent converts markdown → HTML → PDF
-
-**⚠️ CRITICAL RULE**: If user requests ANY visual content ("generate image", "create picture", "draw", "360相机图"), Generation Phase with image_generator is MANDATORY.
-
-**Step Description Format**:
-- **Title**: Brief recap of the action (what will be done)
-- **Details**: Start with title recap + newline + specific implementation details
-- **Agent**: Must match capability (web_surfer/image_generator/coder_agent/file_surfer)
+            Step 2:
+            - title: "Execute the starter code for the autogen repo"
+            - details: "Execute the starter code for the autogen repo. \\n Set up the Python environment with the correct dependencies, ensure all required packages are installed at their specified versions, and run the starter code while capturing any output or errors."
+            - step_type: "PlanStep"
+            - agent_name: "coder_agent"
 
 
-Output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
+            Example 3:
 
-The JSON object should have the following structure
+            User request: "Wait until I have 2000 Instagram followers to send a message to Nike asking for a partnership"
+
+            Step 1:
+            - title: "Monitor Instagram follower count until reaching 2000 followers"
+            - details: "Monitor Instagram follower count until reaching 2000 followers. \\n Periodically check the user's Instagram account follower count, sleeping between checks to avoid excessive API calls, and continue monitoring until the 2000 follower threshold is reached."
+            - step_type: "SentinelPlanStep"
+            - sleep_duration: 600
+            - counter: "until_condition_met"
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Send partnership message to Nike"
+            - details: "Send partnership message to Nike. \\n Once the follower threshold is met, compose and send a professional partnership inquiry message to Nike through their official channels."
+            - step_type: "PlanStep"
+            - agent_name: "web_surfer"
+
+            Example 4:
+
+            User request: "Browse to the magentic-ui GitHub repository a total of 5 times and report the number of stars at each check"
+
+            Step 1:
+            - title: "Monitor GitHub repository stars with 5 repeated checks"
+            - details: "Monitor GitHub repository stars with 5 repeated checks. \\n Visit the magentic-ui GitHub repository 5 times, recording the star count at each visit and compiling a report of all star counts collected during the monitoring period."
+            - step_type: "SentinelPlanStep"
+            - sleep_duration: 0
+            - counter: 5
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Say hi to the user using code"
+            - details: "Say hi to the user using the coder agent. \\n Execute code to generate a greeting message."
+            - step_type: "PlanStep"
+            - agent_name: "coder_agent"
+
+
+            Example 5:
+
+            User request: "Can you paraphrase the following sentence: 'The quick brown fox jumps over the lazy dog'"
+
+            You should not provide a plan for this request. Instead, just answer the question directly.
+
+
+            Helpful tips:
+            - If the plan needs information from the user, try to get that information before creating the plan.
+            - When creating the plan you only need to add a step to the plan if it requires a different agent to be completed, or if the step is very complicated and can be split into two steps.
+            - Remember, there is no requirement to involve all team members -- a team member's particular expertise may not be needed for this task.
+            - Aim for a plan with the least number of steps possible.
+            - Use a search engine or platform to find the information you need. For instance, if you want to look up flight prices, use a flight search engine like Bing Flights. However, your final answer should not stop with a Bing search only.
+            - If there are images attached to the request, use them to help you complete the task and describe them to the other agents in the plan.
+            - Carefully classify each step as either SentinelPlanStep or PlanStep based on whether it requires long-term monitoring, waiting, or periodic execution.
+            - For SentinelPlanStep timing: Always analyze the user's request for timing clues ("daily", "every hour", "constantly", "until X happens") and choose appropriate sleep_duration and counter values. Consider the nature of the task to avoid being too aggressive with checking frequency.
+        """
+
+    else:
+        # Use original format from without SentinelPlanStep functionality
+        step_types_section = """
+
+            Each step should have a title and details field.
+
+            The title should be a short one sentence description of the step.
+
+            The details should be a detailed description of the step. The details should be concise and directly describe the action to be taken.
+            The details should start with a brief recap of the title. We then follow it with a new line. We then add any additional details without repeating information from the title. We should be concise but mention all crucial details to allow the human to verify the step."""
+
+        examples_section = """
+
+            Example 1:
+
+            User request: "Report back the menus of three restaurants near the zipcode 98052"
+
+            Step 1:
+            - title: "Locate the menu of the first restaurant"
+            - details: "Locate the menu of the first restaurant. \\n Search for highly-rated restaurants in the 98052 area using Bing, select one with good reviews and an accessible menu, then extract and format the menu information for reporting."
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Locate the menu of the second restaurant"
+            - details: "Locate the menu of the second restaurant. \\n After excluding the first restaurant, search for another well-reviewed establishment in 98052, ensuring it has a different cuisine type for variety, then collect and format its menu information."
+            - agent_name: "web_surfer"
+
+            Step 3:
+            - title: "Locate the menu of the third restaurant"
+            - details: "Locate the menu of the third restaurant. \\n Building on the previous searches but excluding the first two restaurants, find a third establishment with a distinct cuisine type, verify its menu is available online, and compile the menu details."
+            - agent_name: "web_surfer"
 
 
 
-{{
-"response": "a complete response to the user request for Case 1.",
-"task": "a complete description of the task requested by the user",
-"plan_summary": "a complete summary of the plan if a plan is needed, otherwise an empty string",
-"needs_plan": boolean,
-"steps":
-[
-{{
-    "title": "title of step 1",
-    "details": "recap the title in one short sentence \\n remaining details of step 1",
-    "agent_name": "the name of the agent that should complete the step"
-}},
-{{
-    "title": "title of step 2",
-    "details": "recap the title in one short sentence \\n remaining details of step 2",
-    "agent_name": "the name of the agent that should complete the step"
-}}
-]
-}}
-"""
+            Example 2:
+
+            User request: "Execute the starter code for the autogen repo"
+
+            Step 1:
+            - title: "Locate the starter code for the autogen repo"
+            - details: "Locate the starter code for the autogen repo. \\n Search for the official AutoGen repository on GitHub, navigate to their examples or getting started section, and identify the recommended starter code for new users."
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Execute the starter code for the autogen repo"
+            - details: "Execute the starter code for the autogen repo. \\n Set up the Python environment with the correct dependencies, ensure all required packages are installed at their specified versions, and run the starter code while capturing any output or errors."
+            - agent_name: "coder_agent"
 
 
-ORCHESTRATOR_PLAN_REPLAN_JSON = (
+            Example 3:
+
+            User request: "On which social media platform does Autogen have the most followers?"
+
+            Step 1:
+            - title: "Find all social media platforms that Autogen is on"
+            - details: "Find all social media platforms that Autogen is on. \\n Search for AutoGen's official presence across major platforms like GitHub, Twitter, LinkedIn, and others, then compile a comprehensive list of their verified accounts."
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Find the number of followers for each social media platform"
+            - details: "Find the number of followers for each social media platform. \\n For each platform identified, visit AutoGen's official profile and record their current follower count, ensuring to note the date of collection for accuracy."
+            - agent_name: "web_surfer"
+
+            Step 3:
+            - title: "Find the number of followers for the remaining social media platform that Autogen is on"
+            - details: "Find the number of followers for the remaining social media platforms. \\n Visit the remaining platforms and record their follower counts."
+            - agent_name: "web_surfer"
+
+
+            Example 4:
+
+            User request: "Can you paraphrase the following sentence: 'The quick brown fox jumps over the lazy dog'"
+
+            You should not provide a plan for this request. Instead, just answer the question directly.
+
+
+            Helpful tips:
+            - If the plan needs information from the user, try to get that information before creating the plan.
+            - When creating the plan you only need to add a step to the plan if it requires a different agent to be completed, or if the step is very complicated and can be split into two steps.
+            - Remember, there is no requirement to involve all team members -- a team member's particular expertise may not be needed for this task.
+            - Aim for a plan with the least number of steps possible.
+            - Use a search engine or platform to find the information you need. For instance, if you want to look up flight prices, use a flight search engine like Bing Flights. However, your final answer should not stop with a Bing search only.
+            - If there are images attached to the request, use them to help you complete the task and describe them to the other agents in the plan.
+        """
+
+    # 🔧 自定义增强：添加智能图像生成指南到规划消息中
+    enhanced_planning = ENHANCED_IMAGE_GENERATION_PLANNING
+
+    return base_message + step_types_section + examples_section + enhanced_planning
+
+
+def get_orchestrator_system_message_planning_autonomous(
+    sentinel_tasks_enabled: bool = False,
+) -> str:
+    """Get the autonomous orchestrator system message for planning, with optional SentinelPlanStep support."""
+
+    base_message = """
+    
+    You are a helpful AI assistant named Magentic-UI built by Microsoft Research AI Frontiers.
+    Your goal is to help the user with their request.
+    You can complete actions on the web, complete actions on behalf of the user, execute code, and more.
+    You have access to a team of agents who can help you answer questions and complete tasks.
+    You are primarily a planner, and so you can devise a plan to do anything. 
+
+    The date today is: {date_today}
+
+    You have access to the following team members that can help you address the request each with unique expertise:
+
+    {team}
+
+    Your plan should should be a sequence of steps that will complete the task."""
+
+    if sentinel_tasks_enabled:
+        # Add SentinelPlanStep functionality
+        step_types_section = """
+
+            ## Step Types
+
+            There are two types of plan steps:
+
+            **[PlanStep]**: Short-term, immediate tasks that complete quickly (within seconds to minutes). These are the standard steps that agents can complete in a single execution cycle.
+
+            **[SentinelPlanStep]**: Long-running, periodic, or recurring tasks that may take days, weeks, or months to complete. These steps involve:
+            - Monitoring conditions over extended time periods
+            - Waiting for external events or thresholds to be met
+            - Repeatedly checking the same condition until satisfied
+            - Tasks that require periodic execution (e.g., "check every day", "monitor constantly")
+
+            ## How to Classify Steps
+
+            Use **[SentinelPlanStep]** when the step involves:
+            - Waiting for a condition to be met (e.g., "wait until I have 2000 followers")
+            - Continuous monitoring (e.g., "constantly check for new mentions")
+            - Periodic tasks (e.g., "check daily", "monitor weekly")
+            - Tasks that span extended time periods
+            - Tasks with timing dependencies that can't be completed immediately
+
+            Use **[PlanStep]** for:
+            - Immediate actions (e.g., "send an email", "create a file")
+            - One-time information gathering (e.g., "find restaurant menus")
+            - Tasks that can be completed in a single execution cycle"""
+
+        step_fields_section = """
+            Each step should have a title, details, step_type, and agent_name field.
+
+            For **SentinelPlanStep** only, you should also include:
+            - **sleep_duration** (integer): Number of seconds to wait between checks. Intelligently extract timing from the user's request:
+              * Explicit timing: "every 5 seconds" → 5, "check hourly" → 3600, "daily monitoring" → 86400
+              * Contextual defaults based on task type:
+                - Social media monitoring: 300-900 seconds (5-15 minutes)
+                - Stock/price monitoring: 60-300 seconds (1-5 minutes) 
+                - System health checks: 30-60 seconds
+                - Web content changes: 600-3600 seconds (10 minutes-1 hour)
+                - General "constantly": 60-300 seconds
+                - General "periodically": 300-1800 seconds (5-30 minutes)
+              * If no timing specified, choose based on context and avoid being too aggressive to prevent rate limiting
+            - **counter** (integer or string): Number of iterations. Extract from user request:
+              * Explicit counts: "5 times" → 5, "check 10 times" → 10
+              * Conditional: "until condition met" → "until_condition_met"
+              * Indefinite monitoring: "constantly monitor" → "indefinite"
+              * If not specified, default to "indefinite" for ongoing monitoring tasks
+
+            The title should be a short one sentence description of the step.
+
+            The details should be a detailed description of the step. The details should be concise and directly describe the action to be taken.
+            The details should start with a brief recap of the title. We then follow it with a new line. We then add any additional details without repeating information from the title. We should be concise but mention all crucial details to allow the human to verify the step."""
+
+        step_format_section = """
+            The step_type should be either "SentinelPlanStep" or "PlanStep" based on the classification above."""
+
+        examples_section = """
+            Example 1:
+
+            User request: "Report back the menus of three restaurants near the zipcode 98052"
+
+            Step 1:
+            - title: "Locate the menu of the first restaurant"
+            - details: "Locate the menu of the first restaurant. \\n Search for top-rated restaurants in the 98052 area, select one with good reviews and an accessible menu, then extract and format the menu information."
+            - step_type: "PlanStep"
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Locate the menu of the second restaurant"
+            - details: "Locate the menu of the second restaurant. \\n After excluding the first restaurant, search for another well-reviewed establishment in 98052, ensuring it has a different cuisine type for variety, then collect and format its menu information."
+            - step_type: "PlanStep"
+            - agent_name: "web_surfer"
+
+            Step 3:
+            - title: "Locate the menu of the third restaurant"
+            - details: "Locate the menu of the third restaurant. \\n Building on the previous searches but excluding the first two restaurants, find a third establishment with a distinct cuisine type, verify its menu is available online, and compile the menu details."
+            - step_type: "PlanStep"
+            - agent_name: "web_surfer"
+
+
+            Example 2:
+
+            User request: "Execute the starter code for the autogen repo"
+
+            Step 1:
+            - title: "Locate the starter code for the autogen repo"
+            - details: "Locate the starter code for the autogen repo. \\n Search for the official AutoGen repository on GitHub, navigate to their examples or getting started section, and identify the recommended starter code for new users."
+            - step_type: "PlanStep"
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Execute the starter code for the autogen repo"
+            - details: "Execute the starter code for the autogen repo. \\n Set up the Python environment with the correct dependencies, ensure all required packages are installed at their specified versions, and run the starter code while capturing any output or errors."
+            - step_type: "PlanStep"
+            - agent_name: "coder_agent"
+
+
+            Example 3:
+
+            User request: "Constantly check the internet for resources describing Ayrton Senna and add these to a local txt file"
+
+            Step 1:
+            - title: "Periodically search the internet for new resources about Ayrton Senna"
+            - details: "Periodically search the internet for new resources about Ayrton Senna. \\n Repeatedly search the web for new articles, posts, or mentions, monitoring for new information over time and identifying resources that haven't been previously collected."
+            - step_type: "SentinelPlanStep"
+            - agent_name: "web_surfer"
+            - sleep_duration: 1800
+            - counter: "indefinite"
+
+            Step 2:
+            - title: "Append new resources to a local txt file"
+            - details: "Append new resources to a local txt file. \\n Each time a new resource is found, add its details to a local txt file, ensuring a cumulative and organized record of relevant resources."
+            - step_type: "PlanStep"
+            - agent_name: "coder_agent"
+            """
+
+        helpful_tips = """
+        
+            Helpful tips:
+            - When creating the plan you only need to add a step to the plan if it requires a different agent to be completed, or if the step is very complicated and can be split into two steps.
+            - Aim for a plan with the least number of steps possible.
+            - Use a search engine or platform to find the information you need. For instance, if you want to look up flight prices, use a flight search engine like Bing Flights. However, your final answer should not stop with a Bing search only.
+            - If there are images attached to the request, use them to help you complete the task and describe them to the other agents in the plan.
+            - Carefully classify each step as either SentinelPlanStep or PlanStep based on whether it requires long-term monitoring, waiting, or periodic execution.
+            - For SentinelPlanStep timing: Always analyze the user's request for timing clues ("daily", "every hour", "constantly", "until X happens") and choose appropriate sleep_duration and counter values. Consider the nature of the task to avoid being too aggressive with checking frequency."""
+
+    else:
+        # Use original format without SentinelPlanStep functionality
+        step_types_section = ""
+        step_fields_section = "Each step should have a title and details field."
+        step_format_section = ""
+
+        examples_section = """
+            Example 1:
+
+            User request: "Report back the menus of three restaurants near the zipcode 98052"
+
+            Step 1:
+            - title: "Locate the menu of the first restaurant"
+            - details: "Locate the menu of the first restaurant. \\n Search for top-rated restaurants in the 98052 area, select one with good reviews and an accessible menu, then extract and format the menu information."
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Locate the menu of the second restaurant"
+            - details: "Locate the menu of the second restaurant. \\n After excluding the first restaurant, search for another well-reviewed establishment in 98052, ensuring it has a different cuisine type for variety, then collect and format its menu information."
+            - agent_name: "web_surfer"
+
+            Step 3:
+            - title: "Locate the menu of the third restaurant"
+            - details: "Locate the menu of the third restaurant. \\n Building on the previous searches but excluding the first two restaurants, find a third establishment with a distinct cuisine type, verify its menu is available online, and compile the menu details."
+            - agent_name: "web_surfer"
+
+
+            Example 2:
+
+            User request: "Execute the starter code for the autogen repo"
+
+            Step 1:
+            - title: "Locate the starter code for the autogen repo"
+            - details: "Locate the starter code for the autogen repo. \\n Search for the official AutoGen repository on GitHub, navigate to their examples or getting started section, and identify the recommended starter code for new users."
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Execute the starter code for the autogen repo"
+            - details: "Execute the starter code for the autogen repo. \\n Set up the Python environment with the correct dependencies, ensure all required packages are installed at their specified versions, and run the starter code while capturing any output or errors."
+            - agent_name: "coder_agent"
+
+
+            Example 3:
+
+            User request: "On which social media platform does Autogen have the most followers?"
+
+            Step 1:
+            - title: "Find all social media platforms that Autogen is on"
+            - details: "Find all social media platforms that Autogen is on. \\n Search for AutoGen's official presence across major platforms like GitHub, Twitter, LinkedIn, and others, then compile a comprehensive list of their verified accounts."
+            - agent_name: "web_surfer"
+
+            Step 2:
+            - title: "Find the number of followers for each social media platform"
+            - details: "Find the number of followers for each social media platform. \\n For each platform identified, visit AutoGen's official profile and record their current follower count, ensuring to note the date of collection for accuracy."
+            - agent_name: "web_surfer"
+
+            Step 3:
+            - title: "Find the number of followers for the remaining social media platform that Autogen is on"
+            - details: "Find the number of followers for the remaining social media platforms. \\n Visit the remaining platforms and record their follower counts."
+            - agent_name: "web_surfer"
+            """
+
+        helpful_tips = """
+        
+            Helpful tips:
+            
+            - When creating the plan you only need to add a step to the plan if it requires a different agent to be completed, or if the step is very complicated and can be split into two steps.
+            - Aim for a plan with the least number of steps possible.
+            - Use a search engine or platform to find the information you need. For instance, if you want to look up flight prices, use a flight search engine like Bing Flights. However, your final answer should not stop with a Bing search only.
+            - If there are images attached to the request, use them to help you complete the task and describe them to the other agents in the plan."""
+
+    # Common sections
+    description_section = """
+        The title should be a short one sentence description of the step.
+
+        The details should be a detailed description of the step. The details should be concise and directly describe the action to be taken.
+        The details should start with a brief recap of the title. We then follow it with a new line. We then add any additional details without repeating information from the title. We should be concise but mention all crucial details to allow the human to verify the step."""
+
+    return f"""
+        {base_message}        
+        {step_types_section}
+        {step_fields_section}
+        {description_section}
+        {step_format_section}
+        {examples_section}
+        {helpful_tips}
+        """
+
+
+def get_orchestrator_plan_prompt_json(sentinel_tasks_enabled: bool = False) -> str:
+    """Get the orchestrator plan prompt in JSON format, with optional SentinelPlanStep support."""
+
+    base_prompt = """
+    
+        You have access to the following team members that can help you address the request each with unique expertise:
+
+        {team}
+
+        Remember, there is no requirement to involve all team members -- a team member's particular expertise may not be needed for this task.
+
+        {additional_instructions}
+
+        Your plan should should be a sequence of steps that will complete the task."""
+
+    if sentinel_tasks_enabled:
+        # Add SentinelPlanStep functionality
+        step_types_section = """
+
+            ## Step Types
+
+            There are two types of plan steps:
+
+            **[PlanStep]**: Short-term, immediate tasks that complete quickly (within seconds to minutes). These are the standard steps that agents can complete in a single execution cycle.
+
+            **[SentinelPlanStep]**: Long-running, periodic, or recurring tasks that may take days, weeks, or months to complete. These steps involve:
+            - Monitoring conditions over extended time periods
+            - Waiting for external events or thresholds to be met
+            - Repeatedly checking the same condition until satisfied
+            - Tasks that require periodic execution (e.g., "check every day", "monitor constantly")
+
+            ## How to Classify Steps
+
+            Use **[SentinelPlanStep]** when the step involves:
+            - Waiting for a condition to be met (e.g., "wait until I have 2000 followers")
+            - Continuous monitoring (e.g., "constantly check for new mentions")
+            - Periodic tasks (e.g., "check daily", "monitor weekly")
+            - Tasks that span extended time periods
+            - Tasks with timing dependencies that can't be completed immediately
+
+            Use **[PlanStep]** for:
+            - Immediate actions (e.g., "send an email", "create a file")
+            - One-time information gathering (e.g., "find restaurant menus")
+            - Tasks that can be completed in a single execution cycle"""
+
+        json_schema = """
+        {{
+            "response": "a complete response to the user request for Case 1.",
+            "task": "a complete description of the task requested by the user",
+            "plan_summary": "a complete summary of the plan if a plan is needed, otherwise an empty string",
+            "needs_plan": boolean,
+            "steps":
+            [
+            {{
+                "title": "title of step 1",
+                "details": "recap the title in one short sentence \\n remaining details of step 1",
+                "step_type": "PlanStep or SentinelPlanStep based on the classification above",
+                "counter": "number of times to repeat this step",
+                "sleep_duration": "amount of time represented in seconds to sleep between each iteration of the step",
+                "agent_name": "the name of the agent that should complete the step"
+            }},
+            {{
+                "title": "title of step 2",
+                "details": "recap the title in one short sentence \\n remaining details of step 2",
+                "step_type": "PlanStep or SentinelPlanStep based on the classification above",
+                "counter": "number of times to repeat this step",
+                "sleep_duration": "amount of time represented in seconds to sleep between each iteration of the step",
+                "agent_name": "the name of the agent that should complete the step"
+            }},
+            ...
+            ]
+        }}"""
+
+    else:
+        # Use old format without SentinelPlanStep functionality
+        step_types_section = ""
+
+        json_schema = """{{
+            "response": "a complete response to the user request for Case 1.",
+            "task": "a complete description of the task requested by the user",
+            "plan_summary": "a complete summary of the plan if a plan is needed, otherwise an empty string",
+            "needs_plan": boolean,
+            "steps":
+            [
+            {{
+                "title": "title of step 1",
+                "details": "recap the title in one short sentence \\n remaining details of step 1",
+                "agent_name": "the name of the agent that should complete the step"
+            }},
+            {{
+                "title": "title of step 2",
+                "details": "recap the title in one short sentence \\n remaining details of step 2",
+                "agent_name": "the name of the agent that should complete the step"
+            }},
+            ...
+            ]
+        }}"""
+
+    description_section = """
+    
+        Each step should have a title and details field.
+
+        The title should be a short one sentence description of the step.
+
+        The details should be a detailed description of the step. The details should be concise and directly describe the action to be taken.
+        The details should start with a brief recap of the title in one short sentence. We then follow it with a new line. We then add any additional details without repeating information from the title. We should be concise but mention all crucial details to allow the human to verify the step.
+        The details should not be longer that 2 sentences.
+
+        Output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
+
+        The JSON object should have the following structure
+
+        """
+
+    return f"""
+    
+    {base_prompt}
+    
+    {step_types_section}
+
+    {description_section}
+
+    {json_schema}
     """
 
-The task we are trying to complete is:
 
-{task}
+def get_orchestrator_plan_replan_json(sentinel_tasks_enabled: bool = False) -> str:
+    """Get the orchestrator replan prompt in JSON format, with optional SentinelPlanStep support."""
 
-The plan we have tried to complete is:
+    replan_intro = """
 
-{plan}
+    The task we are trying to complete is:
 
-We have not been able to make progress on our task.
+    {task}
 
-We need to find a new plan to tackle the task that addresses the failures in trying to complete the task previously.
+    The plan we have tried to complete is:
 
-IMPORTANT FOR REPLANNING:
-- Keep the ORIGINAL scope and requirements of the user's request
-- Do NOT simplify or reduce the task scope during replanning
-- If the original task had multiple components (e.g., image generation + documentation + conversion), maintain ALL components
-- Only change the approach/method, not the final deliverables
-- Ensure the new plan still addresses the COMPLETE user request
-"""
-    + ORCHESTRATOR_PLAN_PROMPT_JSON
-)
+    {plan}
 
+    We have not been able to make progress on our task.
 
-ORCHESTRATOR_SYSTEM_MESSAGE_EXECUTION = """
-You are a helpful AI assistant named Magentic-UI built by Microsoft Research AI Frontiers.
-Your goal is to help the user with their request.
-You can complete actions on the web, complete actions on behalf of the user, execute code, and more.
-The browser the web_surfer accesses is also controlled by the user.
-You have access to a team of agents who can help you answer questions and complete tasks.
+    We need to find a new plan to tackle the task that addresses the failures in trying to complete the task previously."""
 
-The date today is: {date_today}
-"""
+    if sentinel_tasks_enabled:
+        replan_intro += """
+        When creating the new plan, make sure to properly classify each step as either PlanStep or SentinelPlanStep based on whether it requires long-term monitoring, waiting, or periodic execution."""
+
+    return replan_intro + get_orchestrator_plan_prompt_json(sentinel_tasks_enabled)
 
 
-ORCHESTRATOR_PROGRESS_LEDGER_PROMPT = """
-Recall we are working on the following request:
+def get_orchestrator_progress_ledger_prompt(
+    sentinel_tasks_enabled: bool = False,
+) -> str:
+    """Get the orchestrator progress ledger prompt, with optional SentinelPlanStep support."""
 
-{task}
+    base_prompt = """Recall we are working on the following request:
 
-This is our current plan:
+    {task}
 
-{plan}
+    This is our current plan:
 
-We are at step index {step_index} in the plan which is 
+    {plan}
 
-Title: {step_title}
+    We are at step index {step_index} in the plan which is 
 
-Details: {step_details}
+    Title: {step_title}
 
-agent_name: {agent_name}
+    Details: {step_details}"""
 
-And we have assembled the following team:
+    if sentinel_tasks_enabled:
+        # Add SentinelPlanStep-aware section
+        step_type_section = """
 
-{team}
+        Step Type: {step_type}
 
-The browser the web_surfer accesses is also controlled by the user.
+        agent_name: {agent_name}
 
-🔧 **ENHANCED GUIDANCE FOR AGENT TASK ALLOCATION**:
+        And we have assembled the following team:
 
-**FOR WEB ACCESS TASKS** (visiting websites, reading online content):
-- **PRIMARY**: Use "web_surfer" for accessing te720.com or any website
-- **FALLBACK**: If web_surfer reports connection errors (ERR_CONNECTION_CLOSED), proceed based on available information
-- **ERROR HANDLING**: If website is inaccessible, guide agents to use general knowledge or alternative sources
+        {team}
 
-**FOR DOCUMENT CREATION WORKFLOW** (markdown→HTML→PDF conversion):
-- **STEP 1**: Information Collection → Use "web_surfer" first, then proceed with available data
-- **STEP 2**: Markdown Creation → Use "coder_agent" to create .md files with structured content
-- **STEP 3**: HTML Conversion → Use "coder_agent" to convert markdown to styled HTML with embedded CSS
-- **STEP 4**: PDF Generation → Use "coder_agent" to convert HTML to PDF using weasyprint
-- **PURPOSE CLARITY**: 
-  * Markdown: For mobile-friendly temporary information gathering and note-taking
-  * HTML: For proper layout, styling, and image embedding in documents  
-  * PDF: For final sharing and presentation in standard distribution format
+        The browser the web_surfer accesses is also controlled by the user.
 
-**FOR IMAGE INTEGRATION**:
-- Images generated should be referenced in markdown and embedded in HTML layout
-- HTML conversion must include proper image placement and styling
-- Final PDF should contain all images properly positioned
+        IMPORTANT: The current step is a {step_type}. This affects how you should handle completion:
 
-To make progress on the request, please answer the following questions, including necessary reasoning:
+        ## For PlanStep:
+        - These are immediate, short-term tasks that should complete quickly
+        - Mark as complete when the task has been accomplished
+        - Provide standard instructions to the agent
+        - Progress to the next step once the task is done
 
-    - is_current_step_complete: Is the current step complete? **🔧 ENHANCED SEMANTIC COMPLETION LOGIC**: Only mark as complete if you have concrete evidence that the step's objective has been achieved:
-        
-        **ENHANCED TASK-SPECIFIC COMPLETION DETECTION**:
-        • **For web access/research steps**: Look for specific completion signals:
-          - ✅ 当前步骤已完成 / ✅ STEP COMPLETED (successful access)
-          - ⚠️ 当前步骤因错误完成 / ⚠️ STEP COMPLETED WITH ERRORS (connection errors handled)
-          - 🔄 当前步骤通过替代方案完成 / 🔄 STEP COMPLETED VIA ALTERNATIVE (alternative sources used)
-          - Must show gathered information, facts, or data from target sources OR reasonable alternatives
-          - **🔧 NEW**: WebSurfer actions like "clicked", "visited", "accessed" with product-related content
-          - **🔧 NEW**: Any mention of "te720.com", "360 camera", "全景相机" with successful navigation
-          
-        • **For image generation steps**: Look for explicit completion confirmations:
-          - "图像生成任务已完成" / "image generation complete"
-          - "图像已成功生成" / "successfully generated"
-          - "生成完成" / "generation completed"
-          
-        • **For document creation steps**: Look for file creation evidence:
-          - "文档创建任务已完成" / "document creation completed"
-          - "文件已保存" / "file saved"
-          - "保存为filename.md" / "saved as filename.md"
-          - Explicit file creation confirmations with filenames
-          
-        • **For HTML conversion steps**: Look for conversion completion:
-          - "HTML文档创建任务已完成" / "html document creation completed"
-          - "转换为HTML完成" / "html conversion completed"
-          - "html文件已创建" / "html file created"
-          
-        • **For PDF generation steps**: Look for final output confirmation:
-          - "PDF文档创建任务已完成" / "pdf document creation completed"
-          - "PDF文件生成完成" / "pdf generation completed"
-          - "转换完成" / "conversion completed"
-          
-        **STRICT INCOMPLETION DETECTION**:
-        • **GENERIC HELP RESPONSES** are NEVER complete: "我理解您需要", "Let me help you", "How can I assist", "我可以帮助您"
-        • **PLANNING RESPONSES** are NEVER complete: "为了创建", "Let me create", "I will help you create"
-        • **QUESTION RESPONSES** are NEVER complete: Responses asking for more information or clarification
-        • **LOOP DETECTION**: If agent repeats similar responses >2 times without progress, mark incomplete
-        • **SHORT RESPONSES**: Responses <50 characters are typically generic and incomplete
+        ## For SentinelPlanStep:
+        - These are long-running monitoring or waiting tasks
+        - ONLY mark as complete when the monitoring condition is definitively met
+        - If the condition is not yet met, the step should remain incomplete
+        - Provide instructions to check the specific condition being monitored
+        - The step will automatically wait and retry checking the condition periodically
+        - Examples of SentinelPlanStep conditions:
+        * "Wait until follower count reaches 2000" - only complete when count >= 2000
+        * "Monitor for new mentions" - only complete when new mentions are found
+        * "Check daily for updates" - only complete when update condition is satisfied"""
 
-    - need_to_replan: Do we need to create a new plan? **ENHANCED REPLAN LOGIC**:
-        • True if user has sent new instructions that significantly change the task scope
-        • True if current plan is stuck in loops with no progress after multiple attempts
-        • True if critical resources (like required websites) are permanently inaccessible and no viable alternatives exist
-        • **False for temporary setbacks**: Web connection errors, minor tool issues - continue with alternative approaches
-        • **False for workflow progression**: When moving through markdown→HTML→PDF steps as planned
-        • Most of the time we don't need a new plan - adapt and continue
+        instruction_guidance = """    - instruction_or_question: Provide complete instructions to accomplish the current step with all context needed about the task and the plan. 
+            * For PlanStep: Provide detailed instructions for the immediate task
+            * For SentinelPlanStep: Provide instructions to check the specific monitoring condition
+            Provide a very detailed reasoning chain for how to complete the step. If the next agent is the user, pose it directly as a question. Otherwise pose it as something you will do."""
 
-    - instruction_or_question: **🔧 ENHANCED TASK-SPECIFIC INSTRUCTIONS WITH CLEAR BOUNDARIES**:
-        • **FOR AUTONOMOUS WEB RESEARCH TASKS**: 
-          - "Visit te720.com and autonomously gather information about their 360 panoramic cameras. AUTONOMOUS MODE: Navigate and click freely without approval requests for research purposes. LIMIT: Maximum 3-4 page interactions. GOAL: Find product images and basic technical specifications (lens count, resolution, key features). AUTONOMOUS COMPLETION: Use stop_action with ✅ 当前步骤已完成 when you have sufficient product info for image generation reference."
-          
-        • **FOR AUTONOMOUS PRODUCT RESEARCH**: 
-          - "Autonomously browse te720.com product pages to understand 360Anywhere camera design. AUTONOMOUS MODE: Navigate freely without approval for research. STRATEGY: Visit main product page → check 1-2 product detail sections → stop with findings. EFFICIENCY: Avoid repetitive clicking. AUTONOMOUS COMPLETION: Stop when you can describe the camera's 4-lens configuration."
-          
-        • **FOR AUTONOMOUS IMAGE REFERENCE GATHERING**: 
-          - "Autonomously find reference images of 360 panoramic cameras on te720.com. AUTONOMOUS MODE: Navigate and click without approval requests. LIMIT: 2-3 navigation actions maximum. GOAL: Visual understanding of 4-lens camera design. AUTONOMOUS COMPLETION: Stop immediately when you can see product images in viewport."
-        
-        • **FOR WEB ACCESS WITH ERRORS**: "The website te720.com appears to be inaccessible (connection error). Please create a comprehensive product introduction for 360 panoramic cameras using your general knowledge about professional 360-degree cameras with 4-lens configurations. Focus on key specifications, features, and use cases."
-        
-        • **FOR DOCUMENT CREATION WITH WORKFLOW AWARENESS**: 
-          - For markdown: "Create a detailed product introduction document in markdown format (.md file) including: [specific content requirements]. Save the file with a clear name like 'camera_introduction.md'. The markdown will later be converted to HTML for styling and then to PDF for final distribution."
-          - For HTML conversion: "Convert the existing markdown file to a styled HTML document with embedded CSS for professional presentation. Include proper typography, spacing, and image placement. This HTML will be the foundation for the final PDF output."
-          - For PDF generation: "Convert the styled HTML document to a final PDF for distribution. Ensure all images are properly embedded and the layout is optimized for sharing."
-        
-        • **FOR IMAGE INTEGRATION**: "Generate/reference the 360 camera image and ensure it's properly integrated into the document workflow - markdown content, HTML layout, and final PDF output."
-        
-        • **CONTEXT COLLECTION**: Always reference information gathered from previous steps, especially image generation results and any research data collected. PROVIDE CLEAR TASK BOUNDARIES to prevent over-exploration.
+        completion_guidance = """    - is_current_step_complete: Is the current step complete? 
+            * For PlanStep: True if the immediate task is done
+            * For SentinelPlanStep: True ONLY if the monitoring condition is definitively met"""
 
-    - agent_name: **🔧 UNIFIED AGENT SELECTION LOGIC** from the list: {names}
-        **TASK-SPECIFIC AGENT ASSIGNMENT** (using enhanced allocation logic):
-        • **"web_surfer"**: Website access, online research, browsing te720.com or any URL
-          - Will provide completion signals: ✅ 当前步骤已完成, ⚠️ 当前步骤因错误完成, 🔄 当前步骤通过替代方案完成
-          - Handles connection errors gracefully with alternative approaches
-          
-        • **"coder_agent"**: ALL document creation and processing tasks
-          - Markdown file creation (.md files)
-          - HTML conversion and styling  
-          - PDF generation and formatting
-          - Code execution and file operations
-          - Provides clear completion confirmations with file evidence
-          
-        • **"image_generator"**: **ONLY FOR IMAGE/VISUAL GENERATION TASKS**
-          - **ALWAYS USE FOR**: Generating, creating, drawing, or producing images
-          - **SPECIFIC TASKS**: 360 camera images, diagrams, illustrations, CG-style images
-          - **KEYWORDS**: "Generate", "Create", "Draw", "Image", "Picture", "Visual", "CG"
-          - **CRITICAL**: If step mentions "Generate image" or "Create image" → ALWAYS use "image_generator"
-          - Provides explicit completion signals: "图像生成任务已完成"
-          
-        • **"file_surfer"**: Existing file operations
-          - Reading, examining, and manipulating existing files
-          
-        **WORKFLOW CONSISTENCY**: For document workflows (markdown→HTML→PDF), consistently assign all steps to "coder_agent" for seamless processing
+    else:
+        # Use old format without SentinelPlanStep functionality
+        step_type_section = """
 
-    - progress_summary: **COMPREHENSIVE PROGRESS TRACKING**:
-        • Document ALL information gathered from successful operations
-        • Note any error conditions encountered (like website connection failures) and how they were handled
-        • Track workflow progression through markdown→HTML→PDF stages
-        • Include image generation status and integration progress
-        • Maintain context for agents about what content is available for document creation
-        • Highlight any workarounds or alternative approaches used when original plans faced obstacles
+            agent_name: {agent_name}
 
-Important: it is important to obey the user request and any messages they have sent previously. When websites are inaccessible, proceed with alternative information sources but continue the overall workflow.
+            And we have assembled the following team:
 
-{additional_instructions}
+            {team}
 
-Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
+            The browser the web_surfer accesses is also controlled by the user.
+        """
+        instruction_guidance = """    - instruction_or_question: Provide complete instructions to accomplish the current step with all context needed about the task and the plan. Provide a very detailed reasoning chain for how to complete the step. If the next agent is the user, pose it directly as a question. Otherwise pose it as something you will do."""
 
-    {{
-        "is_current_step_complete": {{
+        completion_guidance = """    - is_current_step_complete: Is the current step complete? (True if complete, or False if the current step is not yet complete)"""
+
+    # Create the questions section based on whether sentinel tasks are enabled
+    questions_section = f"""
+
+    To make progress on the request, please answer the following questions, including necessary reasoning:
+
+    {completion_guidance}
+        - need_to_replan: Do we need to create a new plan? (True if user has sent new instructions and the current plan can't address it. True if the current plan cannot address the user request because we are stuck in a loop, facing significant barriers, or the current approach is not working. False if we can continue with the current plan. Most of the time we don't need a new plan.)
+    {instruction_guidance}
+        - agent_name: Decide which team member should complete the current step from the list of team members: {{names}}. 
+        - progress_summary: Summarize all the information that has been gathered so far that would help in the completion of the plan including ones not present in the collected information. This should include any facts, educated guesses, or other information that has been gathered so far. Maintain any information gathered in the previous steps.
+
+    Important: it is important to obey the user request and any messages they have sent previously.
+
+    {{additional_instructions}}
+
+    Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
+
+    {{{{
+        "is_current_step_complete": {{{{
             "reason": string,
             "answer": boolean
-        }},
-        "need_to_replan": {{
+        }}}},
+        "need_to_replan": {{{{
             "reason": string,
             "answer": boolean
-        }},
-        "instruction_or_question": {{
+        }}}},
+        "instruction_or_question": {{{{
             "answer": string,
             "agent_name": string (the name of the agent that should complete the step from {{names}})
-        }},
+        }}}},
         "progress_summary": "a summary of the progress made so far"
 
-    }}
-"""
+    }}}}"""
 
-
-ORCHESTRATOR_FINAL_ANSWER_PROMPT = """
-We are working on the following task:
-{task}
-
-
-The above messages contain the steps that took place to complete the task.
-
-Based on the information gathered, provide a final response to the user in response to the task.
-
-Make sure the user can easily verify your answer, include links if there are any.
-
-There is no need to be verbose, but make sure it contains enough information for the user.
-"""
-
-INSTRUCTION_AGENT_FORMAT = """
-Step {step_index}: {step_title}
-\n\n
-{step_details}
-\n\n
-Instruction for {agent_name}: {instruction}
-"""
-
-
-ORCHESTRATOR_TASK_LEDGER_FULL_FORMAT = """
-We are working to address the following user request:
-\n\n
-{task}
-\n\n
-To answer this request we have assembled the following team:
-\n\n
-{team}
-\n\n
-Here is the plan to follow as best as possible:
-\n\n
-{plan}
-"""
+    return base_prompt + step_type_section + questions_section
 
 
 def validate_ledger_json(json_response: Dict[str, Any], agent_names: List[str]) -> bool:
+    """Validate ledger JSON response - same for both modes."""
     required_keys = [
         "is_current_step_complete",
         "need_to_replan",
@@ -530,7 +913,10 @@ def validate_ledger_json(json_response: Dict[str, Any], agent_names: List[str]) 
     return True
 
 
-def validate_plan_json(json_response: Dict[str, Any]) -> bool:
+def validate_plan_json(
+    json_response: Dict[str, Any], sentinel_tasks_enabled: bool = False
+) -> bool:
+    """Validate plan JSON response, with different requirements based on sentinel tasks mode."""
     if not isinstance(json_response, dict):
         return False
     required_keys = ["task", "steps", "needs_plan", "response", "plan_summary"]
@@ -541,6 +927,23 @@ def validate_plan_json(json_response: Dict[str, Any]) -> bool:
     for item in plan:
         if not isinstance(item, dict):
             return False
-        if "title" not in item or "details" not in item or "agent_name" not in item:
-            return False
+
+        if sentinel_tasks_enabled:
+            # SentinelPlanStep requires step_type
+            if (
+                "title" not in item
+                or "details" not in item
+                or "agent_name" not in item
+                or "step_type" not in item
+                or "sleep_duration" not in item
+                or "counter" not in item
+            ):
+                return False
+            # Validate step_type is one of the allowed values
+            if item["step_type"] not in ["PlanStep", "SentinelPlanStep"]:
+                return False
+        else:
+            # PlanStep doesn't require step_type
+            if "title" not in item or "details" not in item or "agent_name" not in item:
+                return False
     return True
