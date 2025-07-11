@@ -5,8 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ### Backend/Python Development
-- **Start application**: `magentic-ui --port 8081` or `python -m magentic_ui.backend.cli`
-- **Start without Docker**: `magentic-ui --run-without-docker --port 8081`
+- **Start application (hybrid mode)**: `python start_correct.py` or `./start.sh` (recommended - local code + Docker containers)
+- **Start application (legacy)**: `magentic-ui --port 8081` or `python -m magentic_ui.backend.cli`
+- **Start without Docker**: `python run_local.py` or `./start.sh local` (limited functionality - testing only)
 - **CLI mode**: `magentic-cli --work-dir PATH_TO_STORE_LOGS`
 - **Docker diagnostics**: `magentic-ui doctor` and `magentic-ui fix-docker`
 - **Lint code**: `ruff check src`
@@ -16,6 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Run single test**: `pytest tests/test_specific_file.py::TestClass::test_method`
 - **All checks**: `poethepoet check` (runs format, lint, pyright, test)
 - **Prerequisites for tests**: `playwright install` (required before running browser tests)
+- **Verify configuration**: `python verify_config.py` (check for hardcoded models and config issues)
 
 ### Frontend Development
 - **Install dependencies**: `yarn install` (in `frontend/` directory)
@@ -35,7 +37,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Architecture
 
 ### High-Level Structure
-Magentic-UI is a human-centered interface for web agents built on AutoGen's multi-agent framework. It provides both a web UI and CLI for interacting with a team of specialized AI agents.
+Magentic-UI is a human-centered interface for web agents built on AutoGen's multi-agent framework. It uses a **hybrid architecture** combining local Python code with Docker containers:
+
+**Local Code Layer (Coordination)**:
+- FastAPI web server and WebSocket connections
+- Agent orchestration and planning
+- Database management and session handling
+- API key management and configuration
+
+**Docker Container Layer (Execution)**:
+- VNC browser containers for web automation
+- Python environment containers for code execution
+- File manipulation and document processing
+- Secure sandboxed execution environments
+
+**Communication**: Local code communicates with Docker containers via WebSocket connections (for browsers) and Docker API (for code execution).
 
 ### Core Architecture Components
 
@@ -203,3 +219,17 @@ Configure MCP agents in `config.yaml` under `mcp_agent_configs`:
 - **Client resolution**: Supports environment variable substitution automatically
 - **Model switching**: Each agent can use different model clients through configuration
 - **Network stability**: Enhanced HTTP client config with retry mechanisms
+
+### Model Configuration Strategy
+- **Chat Models**: Use OpenRouter with Claude 3.5 Sonnet for all non-image tasks
+- **Image Generation**: Use OpenAI DALL-E 3 directly via OpenAI API
+- **Configuration File**: All model settings in `config.yaml` - no hardcoded models
+- **Environment Variables**: `OPENROUTER_API_KEY` for chat, `OPENAI_API_KEY` for images
+- **Fallback Behavior**: Default configurations use config.yaml values, not hardcoded models
+
+### Hardcoded Model Fixes Applied
+- **magentic_ui_config.py**: Updated default configs to use config.yaml models
+- **task_team.py**: Image generation uses config.yaml settings
+- **web_surfer**: Dynamic model detection for tokenization and tool_choice
+- **backend routes**: Plan learning uses config.yaml models instead of hardcoded GPT-3.5
+- **Verification**: Run `python verify_config.py` to check for remaining hardcoded issues

@@ -24,8 +24,8 @@ class ImageGenerationResult:
 
 @dataclass 
 class ImageGenerationConfig:
-    """图像生成配置"""
-    model: str = "dall-e-3"
+    """图像生成配置 - 从配置文件动态获取默认值"""
+    model: str = "dall-e-3"  # 🔧 保持作为默认值，实际使用时会从配置文件获取
     size: str = "1024x1024"
     quality: str = "standard"  # "standard" or "hd"
     style: str = "vivid"       # "natural" or "vivid"
@@ -68,8 +68,8 @@ class ImageGenerationClient:
     
     def __init__(self, 
                  api_key: str,
-                 base_url: str = "https://api.openai.com/v1",
-                 default_model: str = "dall-e-3",
+                 base_url: str = "https://api.openai.com/v1",  # 🔧 保持默认值，实际使用时会从配置文件获取
+                 default_model: str = "dall-e-3",  # 🔧 保持默认值，实际使用时会从配置文件获取
                  timeout: int = 60):
         # 如果api_key为空，尝试从环境变量获取
         if not api_key:

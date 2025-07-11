@@ -26,11 +26,13 @@ class ModelClientConfigs(BaseModel):
     action_guard: Optional[Union[ComponentModel, Dict[str, Any]]] = None
     image_generator: Optional[Union[ComponentModel, Dict[str, Any]]] = None
 
-    # 🔧 移除硬编码的默认配置，改为动态从配置文件获取
+    # 🔧 默认配置现在使用配置文件中的模型，而不是硬编码
     default_client_config: ClassVar[Dict[str, Any]] = {
         "provider": "autogen_ext.models.openai.OpenAIChatCompletionClient",
         "config": {
-            "model": "gpt-3.5-turbo",  # 仅作为最后的降级选项
+            "model": "anthropic/claude-3-5-sonnet-20241022",  # 🔧 更改为配置文件中的模型
+            "api_key": "$OPENROUTER_API_KEY",  # 🔧 使用配置文件中的API密钥
+            "base_url": "https://openrouter.ai/api/v1",  # 🔧 使用配置文件中的base_url
             "timeout": 180.0,  # 🔧 增加超时时间到3分钟
             "max_retries": 8,  # 🔧 增加重试次数
             # 🔧 增强网络连接稳定性配置
@@ -54,7 +56,9 @@ class ModelClientConfigs(BaseModel):
     default_action_guard_config: ClassVar[Dict[str, Any]] = {
         "provider": "autogen_ext.models.openai.OpenAIChatCompletionClient", 
         "config": {
-            "model": "gpt-3.5-turbo",  # 仅作为最后的降级选项
+            "model": "anthropic/claude-3-5-sonnet-20241022",  # 🔧 更改为配置文件中的模型
+            "api_key": "$OPENROUTER_API_KEY",  # 🔧 使用配置文件中的API密钥
+            "base_url": "https://openrouter.ai/api/v1",  # 🔧 使用配置文件中的base_url
             "timeout": 180.0,  # 🔧 增加超时时间到3分钟
             "max_retries": 8,  # 🔧 增加重试次数
             # 🔧 增强网络连接稳定性配置

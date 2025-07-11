@@ -98,8 +98,16 @@ def main():
     # 加载环境变量
     load_env_file()
     
-    # 构建启动命令
-    cmd = ["uv", "run", "magentic-ui"]
+    # 检查是否可以直接导入 magentic_ui
+    try:
+        import magentic_ui
+        print("✅ 检测到 magentic_ui 模块")
+        # 直接使用 Python 模块方式启动
+        cmd = [sys.executable, "-m", "magentic_ui.backend.cli"]
+    except ImportError:
+        print("⚠️  magentic_ui 未安装，尝试使用 uv run")
+        # 回退到 uv run 方式
+        cmd = ["uv", "run", "magentic-ui"]
     
     # 处理配置文件
     config_path = Path("config.yaml")

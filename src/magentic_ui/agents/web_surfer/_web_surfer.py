@@ -1226,13 +1226,20 @@ class WebSurfer(BaseChatAgent, Component[WebSurferConfig]):
 
         if not self.json_model_output:
             create_args: Dict[str, Any] | None = None
-            if self._model_client.model_info["family"] in [
-                "gpt-4o",
-                "gpt-41",
-                "gpt-45",
-                "o3",
-                "o4",
-            ]:
+            # 🔧 动态检查模型族，不硬编码特定模型
+            model_family = self._model_client.model_info.get("family", "")
+            model_name = getattr(self._model_client, 'model', '').lower()
+            
+            # 检查是否为支持tool_choice的模型
+            supports_tool_choice = (
+                "gpt-4" in model_family.lower() or 
+                "gpt-4o" in model_family.lower() or
+                "gpt-4" in model_name or
+                "o3" in model_family.lower() or
+                "o4" in model_family.lower()
+            )
+            
+            if supports_tool_choice:
                 create_args = {
                     "tool_choice": "required",
                 }
@@ -1928,7 +1935,22 @@ class WebSurfer(BaseChatAgent, Component[WebSurferConfig]):
             model_token_limit = min(reported_limit, 30000)
 
         # Truncate the page content if needed to fit within token limits
-        tokenizer = tiktoken.encoding_for_model("gpt-4o")
+        # 🔧 动态获取模型名称用于 tokenization
+        model_name = getattr(self._model_client, 'model', 'gpt-4o')
+        # 为不同的模型族选择合适的tokenizer
+        if 'claude' in model_name.lower():
+            # Claude 模型使用 GPT-4 的tokenizer作为近似
+            tokenizer = tiktoken.encoding_for_model("gpt-4o")
+        elif 'gpt' in model_name.lower():
+            # GPT 模型使用对应的tokenizer
+            try:
+                tokenizer = tiktoken.encoding_for_model(model_name)
+            except:
+                # 如果没找到对应的tokenizer，使用gpt-4o作为默认
+                tokenizer = tiktoken.encoding_for_model("gpt-4o")
+        else:
+            # 其他模型使用 GPT-4 的tokenizer作为近似
+            tokenizer = tiktoken.encoding_for_model("gpt-4o")
         prompt_tokens = len(tokenizer.encode(prompt))
 
         # 🚨 更保守的token预算分配
