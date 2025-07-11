@@ -26,20 +26,23 @@ from autogen_core.models import ChatCompletionClient
 
 from ..tools.image_generation import ImageGenerationClient, ImageGenerationConfig, ImageGenerationResult
 from .visual_prompt_builder import visual_prompt_builder, VisualRequest
+from ..utils.conversation_storage_manager import add_conversation_file
 
 logger = logging.getLogger(__name__)
 
 class ImageGeneratorAgent(BaseChatAgent):
     """专用AI图像生成代理 - 完全绕过聊天模型，直接调用DALL-E API"""
     
-    def __init__(self, name: str, model_client: ChatCompletionClient, image_client: ImageGenerationClient):
+    def __init__(self, name: str, model_client: ChatCompletionClient, image_client: ImageGenerationClient, session_id: int = None):
         # 🔧 直接继承BaseChatAgent，完全控制逻辑
         super().__init__(name, "AI图像生成代理 - 专门负责调用DALL-E API生成图像")
         self.image_client = image_client
+        self.session_id = session_id  # 🔧 新增：对话会话ID
         # model_client参数保留以满足接口要求，但不使用
         
         logger.info(f"🎨 ImageGeneratorAgent初始化完成: {name}")
         logger.info(f"📡 图像客户端类型: {type(image_client)}")
+        logger.info(f"📁 对话会话ID: {session_id}")
         logger.info(f"🚀 完全绕过聊天模型，直接调用DALL-E API")
     
     @property
@@ -127,6 +130,9 @@ class ImageGeneratorAgent(BaseChatAgent):
                     except Exception as e:
                         logger.error(f"❌ 图像下载失败: {str(e)}")
                         return self._create_text_response(f"图像下载失败: {str(e)}")
+                
+                # 🔧 新增：保存图像到对话级存储
+                await self._save_to_conversation_storage(result, optimized_prompt)
                 
                 # 🔧 核心修复：直接返回前端能理解的格式
                 return self._create_multimodal_response(request, result, optimized_prompt)
@@ -309,3 +315,39 @@ class ImageGeneratorAgent(BaseChatAgent):
         # 对于图像生成代理，我们不需要保存状态，所以这个方法为空
         logger.info(f"🔄 {self.name} 已重置")
         pass 
+    
+    async def _save_to_conversation_storage(self, result: ImageGenerationResult, prompt: str):
+        """保存生成的图像到对话级存储"""
+        try:
+            if not self.session_id:
+                logger.warning("⚠️ 未设置session_id，跳过对话级存储")
+                return
+            
+            if not result.image_data:
+                logger.warning("⚠️ 没有图像数据，跳过存储")
+                return
+            
+            # 将base64转换为字节数据
+            image_bytes = base64.b64decode(result.image_data)
+            
+            # 生成文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"generated_image_{timestamp}.png"
+            
+            # 保存到对话存储
+            saved_file = add_conversation_file(
+                session_id=self.session_id,
+                file_content=image_bytes,
+                filename=filename,
+                agent_name=self.name,
+                description=f"AI生成的图像 - 提示词: {prompt[:100]}{'...' if len(prompt) > 100 else ''}",
+                is_intermediate=False,  # 图像是最终交付物
+                tags=["ai_generated", "image", "dall-e", "deliverable"]
+            )
+            
+            logger.info(f"📁 图像已保存到对话存储: {saved_file.file_path}")
+            logger.info(f"📊 文件大小: {saved_file.size} bytes")
+            
+        except Exception as e:
+            logger.error(f"❌ 保存图像到对话存储失败: {str(e)}")
+            # 不抛出异常，因为这不应该影响主要的图像生成流程

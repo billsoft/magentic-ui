@@ -26,19 +26,54 @@ class ModelClientConfigs(BaseModel):
     action_guard: Optional[Union[ComponentModel, Dict[str, Any]]] = None
     image_generator: Optional[Union[ComponentModel, Dict[str, Any]]] = None
 
+    # 🔧 移除硬编码的默认配置，改为动态从配置文件获取
     default_client_config: ClassVar[Dict[str, Any]] = {
-        "provider": "OpenAIChatCompletionClient",
+        "provider": "autogen_ext.models.openai.OpenAIChatCompletionClient",
         "config": {
-            "model": "gpt-4.1-2025-04-14",
-        },
-        "max_retries": 10,
+            "model": "gpt-3.5-turbo",  # 仅作为最后的降级选项
+            "timeout": 180.0,  # 🔧 增加超时时间到3分钟
+            "max_retries": 8,  # 🔧 增加重试次数
+            # 🔧 增强网络连接稳定性配置
+            "http_client_config": {
+                "connect": 60.0,  # 🔧 连接超时60秒
+                "read": 180.0,    # 🔧 读取超时3分钟
+                "write": 60.0,    # 🔧 写入超时60秒
+                "pool": 120.0,    # 🔧 连接池超时2分钟
+            },
+            "retry_config": {
+                "max_retries": 8,  # 🔧 增加重试次数
+                "exponential_base": 2,
+                "jitter": True,
+                "max_delay": 120.0,  # 🔧 最大延迟2分钟
+                "retry_on_timeout": True,
+                "retry_on_connection_error": True,
+                "retry_on_rate_limit": True,  # 🔧 添加速率限制重试
+            }
+        }
     }
     default_action_guard_config: ClassVar[Dict[str, Any]] = {
-        "provider": "OpenAIChatCompletionClient",
+        "provider": "autogen_ext.models.openai.OpenAIChatCompletionClient", 
         "config": {
-            "model": "gpt-4.1-nano-2025-04-14",
-        },
-        "max_retries": 10,
+            "model": "gpt-3.5-turbo",  # 仅作为最后的降级选项
+            "timeout": 180.0,  # 🔧 增加超时时间到3分钟
+            "max_retries": 8,  # 🔧 增加重试次数
+            # 🔧 增强网络连接稳定性配置
+            "http_client_config": {
+                "connect": 60.0,  # 🔧 连接超时60秒
+                "read": 180.0,    # 🔧 读取超时3分钟
+                "write": 60.0,    # 🔧 写入超时60秒
+                "pool": 120.0,    # 🔧 连接池超时2分钟
+            },
+            "retry_config": {
+                "max_retries": 8,  # 🔧 增加重试次数
+                "exponential_base": 2,
+                "jitter": True,
+                "max_delay": 120.0,  # 🔧 最大延迟2分钟
+                "retry_on_timeout": True,
+                "retry_on_connection_error": True,
+                "retry_on_rate_limit": True,  # 🔧 添加速率限制重试
+            }
+        }
     }
 
     @classmethod

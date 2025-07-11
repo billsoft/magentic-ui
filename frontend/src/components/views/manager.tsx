@@ -8,7 +8,7 @@ import React, {
 import { message, Spin } from "antd";
 import { useConfigStore } from "../../hooks/store";
 import { appContext } from "../../hooks/provider";
-import { sessionAPI } from "./api";
+import { sessionAPI, runAPI } from "./api";
 import { SessionEditor } from "./session_editor";
 import type { Session } from "../types/datamodel";
 import ChatView from "./chat/chat";
@@ -457,7 +457,7 @@ export const SessionManager: React.FC = () => {
     }, 2000); // Give time for session selection to complete
   };
 
-  // 检测后台任务
+  // 增强的后台任务检测
   const detectBackgroundTasks = useCallback(async () => {
     try {
       const allBackgroundRuns: Run[] = [];
@@ -466,26 +466,60 @@ export const SessionManager: React.FC = () => {
         if (!session.id) continue;
         
         try {
+          // 获取会话的运行任务
           const response = await fetch(`/api/sessions/${session.id}/runs`);
           if (response.ok) {
-            const runs = await response.json();
+            const result = await response.json();
+            const runs = result.data?.runs || result || [];
+            
+            // 过滤活跃任务
             const activeTasks = runs.filter((run: Run) => 
               run.status === 'active' || 
               run.status === 'awaiting_input' || 
               run.status === 'paused'
             );
-            allBackgroundRuns.push(...activeTasks);
+            
+            // 🔧 修复：简化健康状态检查，减少不必要的API调用
+            for (const run of activeTasks) {
+              try {
+                // 只为真正需要的任务进行健康检查
+                if (run.status === 'active' || run.status === 'awaiting_input') {
+                  const healthData = await runAPI.getRunHealth(parseInt(run.id));
+                  run.healthInfo = healthData;
+                }
+                allBackgroundRuns.push(run);
+              } catch (healthError) {
+                // 🔧 修复：健康检查失败时，仍然显示任务，但不假设其状态
+                console.debug(`Health check failed for run ${run.id}:`, healthError);
+                allBackgroundRuns.push(run);
+              }
+            }
           }
         } catch (error) {
-          console.error(`Error fetching runs for session ${session.id}:`, error);
+          // 🔧 修复：减少错误噪音，但保留重要的错误信息
+          console.debug(`Error fetching runs for session ${session.id}:`, error);
         }
       }
       
       setBackgroundRuns(allBackgroundRuns);
+      
+      // 如果有后台任务但当前会话没有活跃连接，显示提示
+      if (allBackgroundRuns.length > 0 && session?.id) {
+        const currentSessionActiveTasks = allBackgroundRuns.filter(
+          run => run.session_id === session.id
+        );
+        
+        if (currentSessionActiveTasks.length > 0) {
+          console.log(`🔍 当前会话有 ${currentSessionActiveTasks.length} 个后台任务运行中`);
+        }
+      }
+      
     } catch (error) {
+      // 🔧 修复：显示明确的错误信息，而不是静默处理
       console.error('Error detecting background tasks:', error);
+      messageApi.error('检测后台任务时出错，请检查网络连接');
     }
-  }, [sessions]);
+  }, [sessions, session?.id]);
 
   // 定期检测后台任务
   useEffect(() => {
@@ -511,17 +545,10 @@ export const SessionManager: React.FC = () => {
 
   const handleStopBackgroundTask = async (runId: number) => {
     try {
-      const response = await fetch(`/api/runs/${runId}/stop`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'Stopped by user from background task indicator' })
-      });
-      
-      if (response.ok) {
-        // 刷新后台任务列表
-        await detectBackgroundTasks();
-        messageApi.success('后台任务已停止');
-      }
+      await runAPI.stopRun(runId);
+      // 刷新后台任务列表
+      await detectBackgroundTasks();
+      messageApi.success('后台任务已停止');
     } catch (error) {
       console.error('Error stopping background task:', error);
       messageApi.error('停止后台任务失败');

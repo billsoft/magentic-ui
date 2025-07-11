@@ -307,6 +307,16 @@ export interface Run {
   team_result: TeamResult | null;
   messages: Message[]; // Change to Message[]
   error_message?: string;
+  healthInfo?: {
+    run_id: number;
+    run_status: string;
+    is_reconnectable: boolean;
+    has_active_manager: boolean;
+    has_websocket_connection: boolean;
+    background_task_active: boolean;
+    can_reconnect: boolean;
+    updated_at?: string;
+  };
 }
 
 export interface InputRequest {

@@ -457,7 +457,59 @@ export class SettingsAPI {
   }
 }
 
+export class RunAPI {
+  private getBaseUrl(): string {
+    return getServerUrl();
+  }
+
+  private getHeaders(): HeadersInit {
+    return {
+      "Content-Type": "application/json",
+    };
+  }
+
+  async getRunHealth(runId: number): Promise<any> {
+    const response = await fetch(
+      `${this.getBaseUrl()}/runs/${runId}/health`,
+      {
+        headers: this.getHeaders(),
+      }
+    );
+    const data = await response.json();
+    if (!data.status) 
+      throw new Error(data.message || "Failed to get run health");
+    return data.data;
+  }
+
+  async stopRun(runId: number): Promise<void> {
+    const response = await fetch(
+      `${this.getBaseUrl()}/runs/${runId}/stop`,
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+      }
+    );
+    const data = await response.json();
+    if (!data.status) 
+      throw new Error(data.message || "Failed to stop run");
+  }
+
+  async getActiveRuns(): Promise<any[]> {
+    const response = await fetch(
+      `${this.getBaseUrl()}/runs/`,
+      {
+        headers: this.getHeaders(),
+      }
+    );
+    const data = await response.json();
+    if (!data.status) 
+      throw new Error(data.message || "Failed to get active runs");
+    return data.data;
+  }
+}
+
 export const teamAPI = new TeamAPI();
 export const sessionAPI = new SessionAPI();
 export const planAPI = new PlanAPI();
 export const settingsAPI = new SettingsAPI();
+export const runAPI = new RunAPI();

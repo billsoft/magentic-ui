@@ -16,7 +16,7 @@ import {
 } from "../../types/datamodel";
 import { appContext } from "../../../hooks/provider";
 import ChatInput from "./chatinput";
-import { sessionAPI, settingsAPI } from "../api";
+import { sessionAPI, settingsAPI, runAPI } from "../api";
 import RunView from "./runview";
 import { messageUtils } from "./rendermessage";
 import { useSettingsStore, GeneralConfig } from "../../store";
@@ -28,6 +28,7 @@ import {
 } from "../../types/plan";
 import SampleTasks from "./sampletasks";
 import ProgressBar from "./progressbar";
+import FileManager from "./FileManager";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -122,6 +123,9 @@ export default function ChatView({
 
   // Replace stepTitles state with currentPlan state
   const [currentPlan, setCurrentPlan] = React.useState<StepProgress["plan"]>();
+  
+  // File manager state
+  const [showFileManager, setShowFileManager] = React.useState(false);
 
   // Create a Message object from AgentMessageConfig
   const createMessage = (
@@ -305,7 +309,6 @@ export default function ChatView({
     setCurrentRun((current: Run | null) => {
       if (!current || !session?.id) return null;
 
-
       switch (message.type) {
         case "error":
           if (inputTimeoutRef.current) {
@@ -318,6 +321,21 @@ export default function ChatView({
             activeSocketRef.current = null;
           }
           console.log("Error: ", message.error);
+          
+          // 🔧 修复：确保错误消息显示给用户
+          const errorMessage = message.error || "Unknown error occurred";
+          messageApi.error(errorMessage);
+          setError({
+            status: false,
+            message: errorMessage,
+          });
+          
+          // 更新运行状态为错误
+          return {
+            ...current,
+            status: "error",
+            error_message: errorMessage,
+          };
 
         case "message":
           if (!message.data) return current;
@@ -946,48 +964,124 @@ export default function ChatView({
     }
   };
 
-  // Add effect to detect and reconnect to background tasks
+  // Enhanced background task detection and reconnection
   React.useEffect(() => {
-    const detectBackgroundTask = async () => {
-      if (!session?.id || !currentRun) return;
+    let reconnectTimer: NodeJS.Timeout | null = null;
+    let healthCheckInterval: NodeJS.Timeout | null = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 2; // 🔧 减少重连尝试次数
+    const reconnectDelay = 3000; // 🔧 增加重连延迟，避免过于频繁
+
+    const attemptReconnection = async (): Promise<boolean> => {
+      if (!session?.id || !currentRun || activeSocket) return false;
 
       try {
-        // Check if there's a background task running
-        const response = await fetch(`/api/runs/${currentRun.id}`, {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
+        reconnectAttempts++;
+        console.log(`🔄 Reconnection attempt ${reconnectAttempts}/${maxReconnectAttempts} for run ${currentRun.id}`);
 
-        if (response.ok) {
-          const runData = await response.json();
-          if (runData.status === 'active' && !activeSocket) {
-            // There's a background task - try to reconnect
-            console.log('Detected background task, attempting reconnection...');
-            const socket = setupWebSocket(currentRun.id, true, false);
-            if (socket) {
-              // Add a message about reconnection
-              setCurrentRun((prevRun) => ({
-                ...prevRun,
-                messages: [
-                  ...prevRun.messages,
-                  {
-                    source: 'system',
-                    content: '🔄 Reconnecting to background task...',
-                    timestamp: new Date().toISOString(),
-                  },
-                ],
-              }));
-            }
+        // 🔧 简化健康检查，减少不必要的API调用
+        const healthData = await runAPI.getRunHealth(parseInt(currentRun.id));
+        
+        if (healthData?.can_reconnect) {
+          console.log(`🔄 重新连接到后台任务中... (尝试 ${reconnectAttempts}/${maxReconnectAttempts})`);
+
+          // Attempt WebSocket reconnection
+          const socket = setupWebSocket(currentRun.id, true, false);
+          
+          if (socket) {
+            // Wait for connection to establish
+            await new Promise<void>((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                reject(new Error('Connection timeout'));
+              }, 5000);
+
+              const checkConnection = () => {
+                if (socket.readyState === WebSocket.OPEN) {
+                  clearTimeout(timeout);
+                  resolve();
+                } else if (socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+                  clearTimeout(timeout);
+                  reject(new Error('Connection failed'));
+                }
+              };
+
+              socket.addEventListener('open', checkConnection);
+              socket.addEventListener('error', () => {
+                clearTimeout(timeout);
+                reject(new Error('Connection error'));
+              });
+
+              checkConnection(); // Check immediately in case already connected
+            });
+
+            console.log('✅ Successfully reconnected to background task');
+            reconnectAttempts = 0; // Reset counter on success
+            return true;
           }
+        } else if (healthData?.background_task_active && healthData?.has_websocket_connection) {
+          console.log('ℹ️ Task is already connected, no reconnection needed');
+          return true;
+        } else {
+          console.log('ℹ️ No background task to reconnect to');
+          return false;
         }
       } catch (error) {
-        console.error('Error detecting background task:', error);
+        console.error(`❌ Reconnection attempt ${reconnectAttempts} failed:`, error);
+        
+        // 🔧 修复：在最后一次尝试失败后，显示明确的错误信息
+        if (reconnectAttempts >= maxReconnectAttempts) {
+          console.warn('⚠️ 无法重新连接到后台任务。任务可能已完成或出现错误。');
+          messageApi.error('无法重新连接到后台任务，请检查网络连接或任务状态');
+        }
+      }
+
+      return false;
+    };
+
+    const scheduleReconnect = () => {
+      if (reconnectAttempts < maxReconnectAttempts && !activeSocket) {
+        reconnectTimer = setTimeout(async () => {
+          const success = await attemptReconnection();
+          if (!success && reconnectAttempts < maxReconnectAttempts) {
+            scheduleReconnect(); // Schedule next attempt
+          }
+        }, reconnectDelay * reconnectAttempts); // Exponential backoff
       }
     };
 
-    // Check for background tasks when component mounts
-    detectBackgroundTask();
+    const performHealthCheck = async () => {
+      if (!session?.id || !currentRun || activeSocket) return;
+
+      try {
+        const healthData = await runAPI.getRunHealth(parseInt(currentRun.id));
+        
+        // If we find a reconnectable background task, start reconnection
+        if (healthData?.can_reconnect && !activeSocket) {
+          console.log('🔍 Background task detected, starting reconnection...');
+          reconnectAttempts = 0; // Reset counter
+          scheduleReconnect();
+        }
+      } catch (error) {
+        // 🔧 修复：减少健康检查错误的噪音，但保留必要的错误信息
+        console.debug('Health check error:', error);
+      }
+    };
+
+    // Initial check when component mounts or dependencies change
+    performHealthCheck();
+
+    // 🔧 修复：减少健康检查频率，避免过度的API调用
+    healthCheckInterval = setInterval(performHealthCheck, 60000); // 每60秒检查一次
+
+    // Cleanup function
+    return () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      if (healthCheckInterval) {
+        clearInterval(healthCheckInterval);
+      }
+    };
   }, [session?.id, currentRun?.id, activeSocket]);
 
   if (!visible) {
@@ -1061,6 +1155,7 @@ export default function ChatView({
                     chatInputRef={chatInputRef}
                     onExecutePlan={handleExecutePlan}
                     enable_upload={false} // Or true if needed
+                    onShowFileManager={() => setShowFileManager(true)}
                   />
                 )}
               </>
@@ -1106,6 +1201,7 @@ export default function ChatView({
                   onPause={handlePause}
                   enable_upload={true}
                   onExecutePlan={handleExecutePlan}
+                  onShowFileManager={() => setShowFileManager(true)}
                 />
               </div>
               <SampleTasks
@@ -1142,6 +1238,16 @@ export default function ChatView({
           )}
         </div>
       </div>
+      
+      {/* File Manager Modal */}
+      {session && (
+        <FileManager
+          session={session}
+          visible={showFileManager}
+          onClose={() => setShowFileManager(false)}
+          taskDescription={currentPlan?.task || "用户任务"}
+        />
+      )}
     </div>
   );
 }

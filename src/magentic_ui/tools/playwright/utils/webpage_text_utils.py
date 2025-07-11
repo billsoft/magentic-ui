@@ -90,7 +90,11 @@ class WebpageTextUtilsPlaywright:
             if max_tokens == -1:
                 return pdf_content
 
-            tokenizer = tiktoken.encoding_for_model("gpt-4o")
+            # 🔧 修复硬编码：使用通用编码器而非特定模型
+            try:
+                tokenizer = tiktoken.get_encoding("cl100k_base")  # 通用编码器
+            except Exception:
+                tokenizer = tiktoken.get_encoding("p50k_base")  # 降级选项
             tokens = tokenizer.encode(pdf_content)
             limited_content = tokenizer.decode(tokens[:max_tokens])
 
@@ -110,7 +114,11 @@ class WebpageTextUtilsPlaywright:
         # Tokenize the text content and limit to max_tokens
         if max_tokens == -1:
             return text_content
-        tokenizer = tiktoken.encoding_for_model("gpt-4o")
+        # 🔧 修复硬编码：使用通用编码器而非特定模型
+        try:
+            tokenizer = tiktoken.get_encoding("cl100k_base")  # 通用编码器
+        except Exception:
+            tokenizer = tiktoken.get_encoding("p50k_base")  # 降级选项
         tokens = tokenizer.encode(text_content)
         limited_text_content = tokenizer.decode(tokens[:max_tokens])
 

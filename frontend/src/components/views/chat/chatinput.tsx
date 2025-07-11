@@ -17,7 +17,7 @@ import {
   Menu,
 } from "antd";
 import type { UploadFile, UploadProps, RcFile } from "antd/es/upload/interface";
-import { FileTextIcon, ImageIcon, XIcon, UploadIcon } from "lucide-react";
+import { FileTextIcon, ImageIcon, XIcon, UploadIcon, FolderIcon } from "lucide-react";
 import { InputRequest } from "../../types/datamodel";
 import { debounce } from "lodash";
 import { planAPI } from "../api";
@@ -55,6 +55,7 @@ interface ChatInputProps {
   onPause?: () => void;
   enable_upload?: boolean;
   onExecutePlan?: (plan: IPlan) => void;
+  onShowFileManager?: () => void;
 }
 
 const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
@@ -70,6 +71,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       onPause,
       enable_upload = false,
       onExecutePlan,
+      onShowFileManager,
     },
     ref
   ) => {
@@ -782,6 +784,23 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                       </Tooltip>
                     </Dropdown>
                   </div>
+                )}
+
+                {/* File Manager Button */}
+                {onShowFileManager && (
+                  <Tooltip
+                    title={<span className="text-sm">文件管理</span>}
+                    placement="top"
+                  >
+                    <button
+                      type="button"
+                      onClick={onShowFileManager}
+                      disabled={isInputDisabled}
+                      className="flex justify-center items-center transition duration-300 hover:bg-accent/10 rounded p-1"
+                    >
+                      <FolderIcon className="h-6 w-6 text-accent" />
+                    </button>
+                  </Tooltip>
                 )}
 
                 {runStatus === "active" && (

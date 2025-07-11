@@ -1,0 +1,105 @@
+# 🔧 边界配置文件 - 定义各种任务和Agent的执行边界
+
+task_boundaries:
+  # 网络研究任务
+  web_research:
+    max_actions: 4
+    time_limit: 180  # 3分钟
+    success_criteria:
+      - "找到产品信息"
+      - "获取技术规格"  
+      - "收集价格信息"
+      - "访问成功"
+    stop_conditions:
+      - "访问被阻止"
+      - "页面加载失败"
+      - "找不到相关信息"
+    autonomous_mode: true
+    approval_threshold: "low"
+
+  # 图像生成任务
+  image_generation:
+    max_actions: 2
+    time_limit: 60   # 1分钟
+    success_criteria:
+      - "图像生成完成"
+      - "图像质量满足要求"
+      - "生成任务已完成"
+    stop_conditions:
+      - "API调用失败"
+      - "生成内容不当"
+      - "图像生成错误"
+    autonomous_mode: true
+    approval_threshold: "never"
+
+  # 文档创建任务
+  document_creation:
+    max_actions: 3
+    time_limit: 120  # 2分钟
+    success_criteria:
+      - "文档创建完成"
+      - "内容格式正确"
+      - "保存成功"
+    stop_conditions:
+      - "文件保存失败"
+      - "格式转换错误"
+    autonomous_mode: true
+    approval_threshold: "low"
+
+  # 代码执行任务
+  code_execution:
+    max_actions: 5
+    time_limit: 300  # 5分钟
+    success_criteria:
+      - "代码执行成功"
+      - "输出结果正确"
+    stop_conditions:
+      - "代码执行错误"
+      - "安全风险检测"
+    autonomous_mode: false
+    approval_threshold: "high"
+
+  # 默认任务配置
+  default:
+    max_actions: 3
+    time_limit: 150  # 2.5分钟
+    success_criteria:
+      - "任务完成"
+    stop_conditions:
+      - "执行错误"
+    autonomous_mode: true
+    approval_threshold: "normal"
+
+# Agent特定的边界配置
+agent_specific:
+  web_surfer:
+    max_page_interactions: 4
+    max_click_depth: 3
+    timeout_per_page: 30
+    allowed_domains: []
+    blocked_domains: []
+
+  image_generator:
+    max_generation_attempts: 2
+    max_resolution: "1024x1024"
+    content_filter: true
+    style_consistency: true
+
+  coder_agent:
+    max_code_length: 1000
+    allowed_imports: []
+    security_scan: true
+    execution_timeout: 60
+
+  file_surfer:
+    max_file_size: "10MB"
+    allowed_formats: ["txt", "md", "html", "pdf"]
+    max_conversions: 3
+    quality_check: true
+
+# 全局设置
+global_settings:
+  max_total_execution_time: 900  # 15分钟
+  max_memory_usage: "500MB"
+  error_tolerance: 3
+  performance_threshold: 0.8

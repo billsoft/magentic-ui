@@ -44,16 +44,16 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ isOpen, onClose }) => {
   const [allowedlistEnabled, setAllowedlistEnabled] = React.useState(false);
 
   const MODEL_OPTIONS = [
-    { value: "gpt-4.1-2025-04-14", label: "OpenAI GPT-4.1" },
-    { value: "gpt-4.1-mini-2025-04-14", label: "OpenAI GPT-4.1 Mini" },
-    { value: "azure-ai-foundry", label: "Azure AI Foundry Template" },
+    { value: "openrouter", label: "OpenRouter (Recommended)" },
     { value: "ollama", label: "Ollama (Local)" },
-    { value: "openrouter", label: "OpenRouter" },
-    { value: "gpt-4.1-nano-2025-04-14", label: "OpenAI GPT-4.1 Nano" },
-    { value: "o4-mini-2025-04-16", label: "OpenAI O4 Mini" },
-    { value: "o3-mini-2025-01-31", label: "OpenAI O3 Mini" },
+    { value: "azure-ai-foundry", label: "Azure AI Foundry" },
     { value: "gpt-4o-2024-08-06", label: "OpenAI GPT-4o" },
     { value: "gpt-4o-mini-2024-07-18", label: "OpenAI GPT-4o Mini" },
+    { value: "o3-mini-2025-01-31", label: "OpenAI O3 Mini" },
+    { value: "o4-mini-2025-04-16", label: "OpenAI O4 Mini" },
+    { value: "gpt-4.1-2025-04-14", label: "OpenAI GPT-4.1" },
+    { value: "gpt-4.1-mini-2025-04-14", label: "OpenAI GPT-4.1 Mini" },
+    { value: "gpt-4.1-nano-2025-04-14", label: "OpenAI GPT-4.1 Nano" },
   ];
 
   const AZURE_AI_FOUNDRY_YAML = `model_config: &client

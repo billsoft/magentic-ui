@@ -526,6 +526,23 @@ class WebSurfer(BaseChatAgent, Component[WebSurferConfig]):
         action_results: List[str] = []
         emited_responses: List[str] = []
         all_screenshots: List[bytes] = []
+        # 🔧 修复：确保浏览器初始化在断言之前完成
+        if not self.did_lazy_init:
+            try:
+                await self.lazy_init()
+            except Exception as init_error:
+                self.logger.error(
+                    f"Failed to initialize WebSurfer browser: {init_error}"
+                )
+                yield Response(
+                    chat_message=TextMessage(
+                        content=f"WebSurfer initialization failed: {str(init_error)}. Please try again or check Docker setup.",
+                        source=self.name,
+                        metadata={"internal": "no"},
+                    )
+                )
+                return
+
         if self.is_paused:
             yield Response(
                 chat_message=TextMessage(
@@ -535,9 +552,50 @@ class WebSurfer(BaseChatAgent, Component[WebSurferConfig]):
                 )
             )
         non_action_tools = ["stop_action", "answer_question"]
-        # first make sure the page is accessible
 
-        assert self._page is not None
+        # 🔧 更强大的页面检查和恢复机制
+        if self._page is None:
+            self.logger.warning(
+                "Page is None after initialization, attempting to create new page"
+            )
+            try:
+                if self._context is not None:
+                    self._page = await self._context.new_page()
+                    await self._playwright_controller.on_new_page(self._page)
+                    await self._playwright_controller.visit_page(
+                        self._page, self.start_page
+                    )
+                else:
+                    self.logger.error("Browser context is None, cannot create page")
+                    yield Response(
+                        chat_message=TextMessage(
+                            content="WebSurfer browser context is not available. Please restart the session.",
+                            source=self.name,
+                            metadata={"internal": "no"},
+                        )
+                    )
+                    return
+            except Exception as page_error:
+                self.logger.error(f"Failed to create page: {page_error}")
+                yield Response(
+                    chat_message=TextMessage(
+                        content=f"Failed to create browser page: {str(page_error)}. Please check Docker browser setup.",
+                        source=self.name,
+                        metadata={"internal": "no"},
+                    )
+                )
+                return
+
+        # 最终检查 - 如果仍然没有页面，则返回错误
+        if self._page is None:
+            yield Response(
+                chat_message=TextMessage(
+                    content="WebSurfer could not initialize browser page. Please check system configuration and try again.",
+                    source=self.name,
+                    metadata={"internal": "no"},
+                )
+            )
+            return
 
         # Set up the cancellation token for the code execution.
         llm_cancellation_token = CancellationToken()
@@ -1863,56 +1921,66 @@ class WebSurfer(BaseChatAgent, Component[WebSurferConfig]):
 
         # 🔧 动态获取模型真实token限制，避免硬编码
         model_token_limit = 30000  # 默认安全值
-        if hasattr(self._model_client, 'model_info') and self._model_client.model_info:
+        if hasattr(self._model_client, "model_info") and self._model_client.model_info:
             # 从模型信息获取实际限制
-            reported_limit = self._model_client.model_info.get('max_tokens', 30000)
+            reported_limit = self._model_client.model_info.get("max_tokens", 30000)
             # 使用更保守的限制，避免429错误
             model_token_limit = min(reported_limit, 30000)
-        
+
         # Truncate the page content if needed to fit within token limits
         tokenizer = tiktoken.encoding_for_model("gpt-4o")
         prompt_tokens = len(tokenizer.encode(prompt))
-        
+
         # 🚨 更保守的token预算分配
         # 为图像、响应和缓冲区预留更多tokens
         reserved_tokens = self.SCREENSHOT_TOKENS + 2000  # 图像 + 响应缓冲
         max_content_tokens = model_token_limit - prompt_tokens - reserved_tokens
-        
+
         # 📊 额外的安全检查
         if max_content_tokens <= 500:  # 如果可用空间太少
             # 使用极简化内容
-            summary_content = f"Page title: {title[:100]}\nContent too large for analysis."
+            summary_content = (
+                f"Page title: {title[:100]}\nContent too large for analysis."
+            )
             content = f"{summary_content}\n\n{prompt}"
-            self.logger.warning(f"⚠️ Token空间不足，使用简化内容 (可用:{max_content_tokens})")
+            self.logger.warning(
+                f"⚠️ Token空间不足，使用简化内容 (可用:{max_content_tokens})"
+            )
         else:
             # Truncate the page content to fit within the token limit
             content_tokens = tokenizer.encode(page_markdown)
-            
+
             if len(content_tokens) > max_content_tokens:
                 # 🔧 智能截断：保留前80%和后20%
                 keep_start = int(max_content_tokens * 0.8)
                 keep_end = max_content_tokens - keep_start
-                
+
                 truncated_start = tokenizer.decode(content_tokens[:keep_start])
-                truncated_end = tokenizer.decode(content_tokens[-keep_end:]) if keep_end > 0 else ""
-                
+                truncated_end = (
+                    tokenizer.decode(content_tokens[-keep_end:]) if keep_end > 0 else ""
+                )
+
                 truncated_content = f"{truncated_start}\n\n... [CONTENT TRUNCATED] ...\n\n{truncated_end}"
                 content = f"Page content (truncated to fit token limit):\n{truncated_content}\n\n{prompt}"
-                
-                self.logger.info(f"🔧 内容截断: {len(content_tokens)} -> {max_content_tokens} tokens")
+
+                self.logger.info(
+                    f"🔧 内容截断: {len(content_tokens)} -> {max_content_tokens} tokens"
+                )
             else:
                 content = f"Page content:\n{page_markdown}\n\n{prompt}"
 
         # 🔍 最终token验证
         final_tokens = len(tokenizer.encode(content))
         total_estimated = final_tokens + self.SCREENSHOT_TOKENS + 500  # 响应预留
-        
+
         if total_estimated > model_token_limit:
             # 紧急截断
             emergency_limit = model_token_limit - self.SCREENSHOT_TOKENS - 1000
             content_tokens = tokenizer.encode(content)[:emergency_limit]
             content = tokenizer.decode(content_tokens)
-            self.logger.warning(f"🚨 紧急截断: {total_estimated} -> {len(content_tokens)} tokens")
+            self.logger.warning(
+                f"🚨 紧急截断: {total_estimated} -> {len(content_tokens)} tokens"
+            )
 
         # Create the message with the content and image
         messages.append(
@@ -1932,7 +2000,7 @@ class WebSurfer(BaseChatAgent, Component[WebSurferConfig]):
 
             assert isinstance(response.content, str)
             return response.content
-            
+
         except Exception as e:
             # 🔧 如果还是失败，返回简化摘要
             scaled_screenshot.close()

@@ -9,11 +9,24 @@
 model_config: &client
   provider: autogen_ext.models.openai.OpenAIChatCompletionClient
   config:
-    model: google/gemini-2.5-pro
+    model: anthropic/claude-3-5-sonnet-20241022
     api_key: $OPENROUTER_API_KEY
     base_url: https://openrouter.ai/api/v1
     timeout: 120.0
-    max_retries: 3
+    max_retries: 5
+    # 🔧 增强网络连接稳定性配置
+    http_client_config:
+      connect: 30.0  # 连接超时30秒
+      read: 90.0     # 读取超时90秒
+      write: 30.0    # 写入超时30秒
+      pool: 60.0     # 连接池超时60秒
+    retry_config:
+      max_retries: 5
+      exponential_base: 2
+      jitter: true
+      max_delay: 60.0
+      retry_on_timeout: true
+      retry_on_connection_error: true
     model_info:
       vision: true
       function_calling: true
@@ -39,7 +52,20 @@ image_generation_client: &image_client
     api_key: $OPENAI_API_KEY  # ✅ 必须使用真正的OpenAI API密钥，OpenRouter不支持图像生成
     base_url: https://api.openai.com/v1  # ✅ 必须使用OpenAI官方API
     timeout: 120.0
-    max_retries: 3
+    max_retries: 5
+    # 🔧 增强网络连接稳定性配置
+    http_client_config:
+      connect: 30.0  # 连接超时30秒
+      read: 90.0     # 读取超时90秒
+      write: 30.0    # 写入超时30秒
+      pool: 60.0     # 连接池超时60秒
+    retry_config:
+      max_retries: 5
+      exponential_base: 2
+      jitter: true
+      max_delay: 60.0
+      retry_on_timeout: true
+      retry_on_connection_error: true
     model_info:
       image_generation: true  # 明确标识为图像生成
       supported_formats: ["png", "webp"]

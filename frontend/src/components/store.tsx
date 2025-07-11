@@ -46,7 +46,10 @@ const defaultConfig: GeneralConfig = {
     "web_surfer": DEFAULT_OPENAI,
     "coder": DEFAULT_OPENAI,
     "file_surfer": DEFAULT_OPENAI,
-    "action_guard": PROVIDER_FORM_MAP[DEFAULT_OPENAI.provider].presets["gpt-4.1-nano-2025-04-14"],
+    "action_guard": { 
+      ...DEFAULT_OPENAI, 
+      config: { ...DEFAULT_OPENAI.config, model: "gpt-3.5-turbo" }
+    },
   },
 };
 

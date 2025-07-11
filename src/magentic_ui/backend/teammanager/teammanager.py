@@ -425,19 +425,34 @@ class TeamManager:
             if llm_event_logger in logger.handlers:
                 logger.handlers.remove(llm_event_logger)
 
-            # Ensure cleanup happens
+            # Ensure cleanup happens only if team is not needed for background processing
             if self.team and hasattr(self.team, "close"):
-                logger.info("Closing team")
-                await self.team.close()  # type: ignore
-                logger.info("Team closed")
+                try:
+                    logger.info("Closing team")
+                    await self.team.close()  # type: ignore
+                    logger.info("Team closed")
+                except (LookupError, RuntimeError) as e:
+                    # Handle cases where agents are already cleaned up during background processing
+                    logger.warning(f"Team close error (expected during background processing): {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error closing team: {e}")
+                    # Don't re-raise to avoid breaking the cleanup process
 
     async def close(self):
         """Close the team manager"""
         if self.team and hasattr(self.team, "close"):
-            logger.info("Closing team")
-            await self.team.close()  # type: ignore
-            self.team = None
-            logger.info("Team closed")
+            try:
+                logger.info("Closing team")
+                await self.team.close()  # type: ignore
+                self.team = None
+                logger.info("Team closed")
+            except (LookupError, RuntimeError) as e:
+                # Handle cases where agents are already cleaned up
+                logger.warning(f"Team close error (expected during cleanup): {e}")
+                self.team = None  # Mark as closed even if cleanup failed
+            except Exception as e:
+                logger.error(f"Unexpected error closing team: {e}")
+                self.team = None  # Mark as closed to prevent retry
         else:
             logger.warning("Team manager is not initialized or already closed")
 

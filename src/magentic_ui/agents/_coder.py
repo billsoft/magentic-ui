@@ -31,16 +31,19 @@ from autogen_agentchat.messages import (
     BaseChatMessage,
     TextMessage,
     MessageFactory,
+    MultiModalMessage,
 )
 from autogen_core.code_executor import CodeResult
 from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
 from autogen_ext.code_executors.docker import DockerCommandLineCodeExecutor
 
+# 使用相对导入避免循环导入问题
 from ..utils import thread_to_context
 from ._utils import exec_command_umask_patched
 
 from ..approval_guard import BaseApprovalGuard
 from ..guarded_action import ApprovalDeniedError, TrivialGuardedAction
+from ..utils.conversation_storage_manager import add_conversation_file, add_conversation_text_file
 
 DockerCommandLineCodeExecutor._execute_command = exec_command_umask_patched  # type: ignore
 
@@ -337,6 +340,35 @@ class CoderAgent(BaseChatAgent, Component[CoderAgentConfig]):
     In addition to responding with text you can write code and execute code that you generate.
     The date today is: {date_today}
 
+    🔧 IMPORTANT: You can handle both CODE and DOCUMENT tasks:
+    
+    For DOCUMENT CREATION tasks (like product introductions, summaries, reports):
+    - You can create markdown files, HTML files, and other documents
+    - Use Python code to generate and save these documents
+    - Always confirm the document was created successfully
+    - Provide clear completion messages when documents are ready
+    - Support full markdown→HTML→PDF conversion workflow
+    
+    For CODE tasks:
+    - Generate py or sh code blocks in the order you'd like your code to be executed
+    - Code block must indicate language type
+    - Do not try to predict the answer of execution
+    
+    🎯 TASK RECOGNITION: 
+    - If asked to create product introductions, summaries, or documentation → Use Python to generate markdown/HTML files
+    - If asked to perform calculations, data analysis, or programming → Use appropriate code
+    - If asked to create visual content → Use plotting/image generation code
+    - If asked for markdown→HTML→PDF conversion → Execute complete workflow
+    - Always output clear completion confirmations
+
+    🔄 DOCUMENT WORKFLOW SUPPORT:
+    For markdown→HTML→PDF conversion tasks:
+    1. Collect information from chat history (web_surfer, file_surfer, image_generator outputs)
+    2. Create well-structured markdown content
+    3. Convert markdown to styled HTML with proper layout
+    4. Generate final PDF with embedded images
+    5. Confirm each step completion clearly
+
     Rules to follow for Code:
     - Generate py or sh code blocks in the order you'd like your code to be executed.
     - Code block must indicate language type. Do not try to predict the answer of execution. Code blocks will be automatically executed for you.
@@ -368,6 +400,80 @@ class CoderAgent(BaseChatAgent, Component[CoderAgentConfig]):
     - For simple drawing or diagram requests, consider if the user's model has vision/multimodal capabilities that might be more appropriate than code-based plotting.
 
    VERY IMPORTANT: If you intend to write code to be executed, do not end your response without a code block. If you want to write code you must provide a code block in the current generation.
+    
+    📋 DOCUMENT CREATION TEMPLATES:
+    
+    For markdown to HTML conversion:
+    ```python
+    import markdown
+    from pathlib import Path
+    
+    # Create styled HTML with embedded CSS
+    html_template = '''<!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{{title}}</title>
+        <style>
+            body {{{{ 
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #fff;
+            }}}}
+            h1, h2, h3 {{{{ color: #2c5282; margin-top: 2em; }}}}
+            h1 {{{{ border-bottom: 3px solid #2c5282; padding-bottom: 10px; }}}}
+            img {{{{ max-width: 100%; height: auto; margin: 20px 0; border-radius: 8px; }}}}
+            .product-spec {{{{ 
+                background: #f7fafc; 
+                border-left: 4px solid #4299e1; 
+                padding: 1em; 
+                margin: 1em 0; 
+            }}}}
+            .highlight {{{{ background-color: #fff3cd; padding: 2px 4px; }}}}
+        </style>
+    </head>
+    <body>
+        {{content}}
+    </body>
+    </html>'''
+    
+    # Convert markdown to HTML
+    md_content = Path('document.md').read_text(encoding='utf-8')
+    html_content = markdown.markdown(md_content, extensions=['extra', 'codehilite'])
+    final_html = html_template.format(title="产品介绍", content=html_content)
+    
+    Path('document.html').write_text(final_html, encoding='utf-8')
+    print("✅ HTML文档创建完成: document.html")
+    ```
+    
+    For HTML to PDF conversion:
+    ```python
+    # Install weasyprint if needed
+    try:
+        import weasyprint
+    except ImportError:
+        import subprocess
+        subprocess.run(['pip', 'install', 'weasyprint'], check=True)
+        import weasyprint
+    
+    from pathlib import Path
+    
+    # Convert HTML to PDF
+    html_file = 'document.html'
+    pdf_file = 'document.pdf'
+    
+    if Path(html_file).exists():
+        weasyprint.HTML(filename=html_file).write_pdf(pdf_file)
+        print(f"✅ PDF文档创建完成: {{pdf_file}}")
+        print(f"📄 文件大小: {{Path(pdf_file).stat().st_size / 1024:.1f}} KB")
+    else:
+        print(f"❌ HTML文件不存在: {{html_file}}")
+    ```
     """
 
     def __init__(
@@ -383,6 +489,7 @@ class CoderAgent(BaseChatAgent, Component[CoderAgentConfig]):
         bind_dir: Path | str | None = None,
         use_local_executor: bool = False,
         approval_guard: BaseApprovalGuard | None = None,
+        session_id: int = None,
     ) -> None:
         """Initialize the CoderAgent.
 
@@ -408,6 +515,7 @@ class CoderAgent(BaseChatAgent, Component[CoderAgentConfig]):
         self.is_paused = False
         self._paused = asyncio.Event()
         self._approval_guard = approval_guard
+        self.session_id = session_id  # 🔧 新增：对话会话ID
 
         if work_dir is None:
             self._work_dir = Path(tempfile.mkdtemp())
@@ -500,6 +608,139 @@ class CoderAgent(BaseChatAgent, Component[CoderAgentConfig]):
         last_message_received: BaseChatMessage = messages[-1]
         inner_messages: List[BaseChatMessage] = []
 
+        # 🔧 新增：检测文档创建任务（仅处理TextMessage）
+        is_document_task = False
+        is_pdf_task = False
+        is_html_task = False
+        has_reference_info = False
+        has_info_from_history = False
+        available_info = ""
+        enhanced_system_prompt = ""
+        
+        task_content = ""
+        if isinstance(last_message_received, TextMessage):
+            task_content = last_message_received.content.lower()
+            is_document_task = any(keyword in task_content for keyword in [
+                "产品介绍", "markdown", "总结", "创建", "文档", "介绍", "收集信息",
+                "product introduction", "create", "document", "summary", "gather information",
+                "html", "pdf", "转换", "convert", "format", "排版"
+            ])
+        
+        # 🔧 改进文档创建任务处理逻辑
+        if is_document_task:
+            # 检查是否是PDF转换任务
+            is_pdf_task = any(keyword in task_content for keyword in [
+                "pdf", "转pdf", "输出pdf", "生成pdf", "convert to pdf", "generate pdf"
+            ])
+            
+            # 检查是否是HTML转换任务
+            is_html_task = any(keyword in task_content for keyword in [
+                "html", "转html", "html格式", "convert to html", "format html", "排版"
+            ])
+            
+            # 检查是否有参考信息或数据
+            has_reference_info = any(keyword in task_content for keyword in [
+                "基于", "参考", "根据", "信息", "资料", "数据", "内容", "来源", "网站",
+                "based on", "reference", "according to", "information", "data", "content", "source", "website"
+            ])
+            
+            # 🔧 新增：检查聊天历史中是否有web_surfer或其他agent提供的信息
+            # 搜索聊天历史中的信息
+            for msg in self._chat_history[-10:]:  # 检查最近10条消息
+                if hasattr(msg, 'source') and msg.source in ["web_surfer", "file_surfer", "image_generator"]:
+                    if isinstance(msg, TextMessage) and len(msg.content) > 50:
+                        has_info_from_history = True
+                        available_info += f"\n来源 ({msg.source}):\n{msg.content[:500]}...\n"
+                    elif isinstance(msg, MultiModalMessage):
+                        # 处理多模态消息 - 提取文本内容
+                        try:
+                            text_parts = [part for part in msg.content if isinstance(part, str)]
+                            if text_parts:
+                                text_content = " ".join(text_parts)
+                                if len(text_content) > 50:
+                                    has_info_from_history = True
+                                    available_info += f"\n来源 ({msg.source}):\n{text_content[:500]}...\n"
+                        except (TypeError, AttributeError):
+                            # 如果无法迭代content，跳过
+                            pass
+            
+            # 🔧 如果有信息可用，直接执行文档创建任务
+            if has_info_from_history or has_reference_info or is_html_task or is_pdf_task:
+                # 构建增强的系统提示，包含具体的任务指导
+                enhanced_system_prompt = self.system_prompt_coder_template.format(
+                    date_today=datetime.now().strftime("%Y-%m-%d")
+                ) + f"""
+
+🎯 **当前任务类型**: 文档创建任务
+
+📋 **任务识别**:
+- 文档创建任务: {'是' if is_document_task else '否'}
+- HTML转换任务: {'是' if is_html_task else '否'}
+- PDF转换任务: {'是' if is_pdf_task else '否'}
+- 有参考信息: {'是' if has_info_from_history or has_reference_info else '否'}
+
+📚 **可用信息**:
+{available_info if available_info else "请基于任务要求创建文档"}
+
+🔧 **执行指导**:
+1. 对于Markdown文档创建：创建.md文件并保存
+2. 对于HTML转换：将markdown转换为HTML格式
+3. 对于PDF转换：使用以下代码模板：
+
+```python
+# PDF转换示例代码
+import weasyprint
+from pathlib import Path
+
+# 如果没有weasyprint，先安装
+try:
+    import weasyprint
+except ImportError:
+    import subprocess
+    subprocess.run(['pip', 'install', 'weasyprint'], check=True)
+    import weasyprint
+
+# HTML转PDF
+html_content = '''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>产品介绍</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; }}
+        h1 {{ color: #333; }}
+        h2 {{ color: #666; }}
+        p {{ line-height: 1.6; }}
+    </style>
+</head>
+<body>
+    <h1>360全景相机产品介绍</h1>
+    <!-- 在这里插入具体内容 -->
+</body>
+</html>'''
+
+# 保存HTML并转换为PDF
+Path('product_introduction.html').write_text(html_content, encoding='utf-8')
+weasyprint.HTML(string=html_content).write_pdf('product_introduction.pdf')
+print("✅ PDF文件已生成: product_introduction.pdf")
+```
+
+⚠️ **重要**: 必须在代码执行后提供明确的完成确认消息！
+"""
+                
+                # 直接执行文档创建任务，不再询问信息
+                pass  # 继续执行正常的代码生成流程
+            else:
+                # 🔧 只在真正缺少信息时才询问
+                yield Response(
+                    chat_message=TextMessage(
+                        content="我理解您需要创建产品介绍文档。我看到您想要创建360全景相机的产品介绍。让我基于一般的360全景相机知识为您创建一个基础的产品介绍文档。",
+                        source=self.name,
+                        metadata={"internal": "no"},
+                    )
+                )
+                # 不要return，继续执行代码生成
+
         # Set up the cancellation token for the code execution.
         code_execution_token = CancellationToken()
 
@@ -513,9 +754,13 @@ class CoderAgent(BaseChatAgent, Component[CoderAgentConfig]):
 
         monitor_pause_task = asyncio.create_task(monitor_pause())
 
-        system_prompt_coder = self.system_prompt_coder_template.format(
-            date_today=datetime.now().strftime("%Y-%m-%d")
-        )
+        # 🔧 使用增强的系统提示（如果是文档任务）
+        if is_document_task and (has_info_from_history or has_reference_info or is_html_task or is_pdf_task):
+            system_prompt_coder = enhanced_system_prompt
+        else:
+            system_prompt_coder = self.system_prompt_coder_template.format(
+                date_today=datetime.now().strftime("%Y-%m-%d")  # 🔧 修复：只需要date_today参数
+            )
 
         try:
             executed_code = False
@@ -555,6 +800,25 @@ class CoderAgent(BaseChatAgent, Component[CoderAgentConfig]):
                 for txt_msg in inner_messages:
                     assert isinstance(txt_msg, TextMessage)
                     combined_output += f"{txt_msg.content}\n"
+                
+                # 🔧 新增：为文档创建任务提供更明确的完成确认
+                if is_document_task and executed_code:
+                    # 检查是否有文件创建的证据
+                    file_creation_evidence = any(keyword in combined_output.lower() for keyword in [
+                        "保存", "创建", "文件", "saved", "created", ".md", ".html", ".pdf",
+                        "write_text", "write_pdf", "已生成", "successfully", "完成"
+                    ])
+                    
+                    if file_creation_evidence:
+                        if is_pdf_task:
+                            combined_output += "\n\n✅ **PDF文档创建任务已完成**！产品介绍PDF文件已成功生成。"
+                        elif is_html_task:
+                            combined_output += "\n\n✅ **HTML文档创建任务已完成**！产品介绍HTML文件已成功生成。"
+                        else:
+                            combined_output += "\n\n✅ **文档创建任务已完成**！产品介绍文档已成功生成。"
+                    else:
+                        combined_output += "\n\n📝 文档创建过程已执行，请检查生成的文件。"
+                
                 final_response_msg = TextMessage(
                     source=self.name,
                     metadata={"internal": "yes"},

@@ -12,7 +12,10 @@ export const MODEL_CLIENT_CONFIGS = {
   "web_surfer": { value: "web_surfer", label: "Web Surfer", defaultValue: DEFAULT_OPENAI },
   "coder": { value: "coder", label: "Coder", defaultValue: DEFAULT_OPENAI },
   "file_surfer": { value: "file_surfer", label: "File Surfer", defaultValue: DEFAULT_OPENAI },
-  "action_guard": { value: "action_guard", label: "Action Guard", defaultValue: PROVIDER_FORM_MAP[DEFAULT_OPENAI.provider].presets["gpt-4.1-nano-2025-04-14"] },
+  "action_guard": { value: "action_guard", label: "Action Guard", defaultValue: { 
+    ...DEFAULT_OPENAI, 
+    config: { ...DEFAULT_OPENAI.config, model: "gpt-3.5-turbo" }  // 🔧 使用通用模型替代硬编码
+  } },
 };
 
 type ModelClientKey = keyof typeof MODEL_CLIENT_CONFIGS;

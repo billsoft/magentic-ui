@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Alert, Button, Badge, Tooltip, Modal } from 'antd';
-import { Play, Pause, Square, RotateCcw, Info } from 'lucide-react';
+import { Alert, Button, Badge, Tooltip, Modal, notification } from 'antd';
+import { Play, Pause, Square, RotateCcw, Info, Wifi, WifiOff } from 'lucide-react';
 import { Run, RunStatus, AgentMessageConfig, TextMessageConfig } from '../types/datamodel';
+import { runAPI } from './api';
 
 interface BackgroundTaskIndicatorProps {
   runs: Run[];
@@ -18,32 +19,35 @@ interface BackgroundTaskInfo {
   lastUpdate: string;
   taskDescription: string;
   progressInfo?: string;
+  isReconnectable?: boolean;
+  hasActiveManager?: boolean;
+  hasWebSocketConnection?: boolean;
+  canReconnect?: boolean;
 }
 
 // 提取任务描述的辅助函数
-const extractTaskDescription = (task: AgentMessageConfig | null | undefined): string => {
-  if (!task) return 'No description';
+const extractTaskDescription = (task: any): string => {
+  if (!task) return 'Unknown task';
   
-  // 处理不同类型的消息配置
-  if ('content' in task) {
-    if (typeof task.content === 'string') {
-      return task.content;
-    } else if (Array.isArray(task.content)) {
-      // 对于数组内容，提取字符串部分
-      const textParts = task.content
-        .filter((item): item is string => typeof item === 'string')
-        .join(' ');
-      return textParts || 'Mixed content message';
-    }
+  if (typeof task === 'string') {
+    return task.length > 100 ? task.substring(0, 100) + '...' : task;
   }
   
-  return 'Unknown task type';
+  if (typeof task === 'object') {
+    if (task.content) {
+      const content = typeof task.content === 'string' ? task.content : JSON.stringify(task.content);
+      return content.length > 100 ? content.substring(0, 100) + '...' : content;
+    }
+    return JSON.stringify(task).substring(0, 100) + '...';
+  }
+  
+  return 'Task details unavailable';
 };
 
 // 检查任务内容是否包含特定关键词
-const containsKeywords = (task: AgentMessageConfig | null | undefined, keywords: string[]): boolean => {
-  const description = extractTaskDescription(task).toLowerCase();
-  return keywords.some(keyword => description.includes(keyword));
+const containsKeywords = (task: any, keywords: string[]): boolean => {
+  const taskStr = JSON.stringify(task).toLowerCase();
+  return keywords.some(keyword => taskStr.includes(keyword.toLowerCase()));
 };
 
 export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = ({
@@ -55,33 +59,65 @@ export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = (
   const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTaskInfo[]>([]);
   const [showDetails, setShowDetails] = useState(false);
   const [expandedTask, setExpandedTask] = useState<number | null>(null);
+  const [reconnectingTasks, setReconnectingTasks] = useState<Set<number>>(new Set());
 
-  // 检测后台任务
+  // 检测后台任务并增强状态信息
   useEffect(() => {
-    const detectBackgroundTasks = () => {
+    const detectBackgroundTasks = async () => {
       const activeTasks = runs.filter(run => 
         run.status === 'active' || 
         run.status === 'awaiting_input' || 
         run.status === 'paused'
       );
 
-      const taskInfos: BackgroundTaskInfo[] = activeTasks.map(run => ({
-        runId: parseInt(run.id),
-        sessionId: run.session_id,
-        sessionName: `Session ${run.session_id}`, // 实际应该从session数据获取
-        status: run.status,
-        lastUpdate: run.updated_at || new Date().toISOString(),
-        taskDescription: extractTaskDescription(run.task),
-        progressInfo: getProgressInfo(run),
-      }));
+      const enhancedTasks: BackgroundTaskInfo[] = [];
 
-      setBackgroundTasks(taskInfos);
+      for (const run of activeTasks) {
+        try {
+          // 🔧 修复：减少健康检查API调用，只在必要时调用
+          const healthData = await runAPI.getRunHealth(parseInt(run.id));
+
+          enhancedTasks.push({
+            runId: parseInt(run.id),
+            sessionId: run.session_id,
+            sessionName: `Session ${run.session_id}`,
+            status: run.status,
+            lastUpdate: run.updated_at || new Date().toISOString(),
+            taskDescription: extractTaskDescription(run.task),
+            progressInfo: getProgressInfo(run),
+            isReconnectable: healthData?.is_reconnectable || false,
+            hasActiveManager: healthData?.has_active_manager || false,
+            hasWebSocketConnection: healthData?.has_websocket_connection || false,
+            canReconnect: healthData?.can_reconnect || false,
+          });
+        } catch (error) {
+          // 🔧 修复：减少健康检查错误的噪音，但保留基本功能
+          console.debug(`Health check failed for run ${run.id}:`, error);
+          // 添加基本信息，即使没有健康数据
+          enhancedTasks.push({
+            runId: parseInt(run.id),
+            sessionId: run.session_id,
+            sessionName: `Session ${run.session_id}`,
+            status: run.status,
+            lastUpdate: run.updated_at || new Date().toISOString(),
+            taskDescription: extractTaskDescription(run.task),
+            progressInfo: getProgressInfo(run),
+            // 🔧 修复：当健康检查失败时，不假设任务可重连
+            isReconnectable: false,
+            hasActiveManager: false,
+            hasWebSocketConnection: false,
+            canReconnect: false,
+          });
+        }
+      }
+
+      setBackgroundTasks(enhancedTasks);
     };
 
     detectBackgroundTasks();
     
-    // 每30秒检查一次
-    const interval = setInterval(detectBackgroundTasks, 30000);
+    // 🔧 修复：减少检查频率，避免过度的API调用
+    const interval = setInterval(detectBackgroundTasks, 30000); // 每30秒检查一次，而不是15秒
     return () => clearInterval(interval);
   }, [runs]);
 
@@ -108,8 +144,22 @@ export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = (
     return '未知状态';
   };
 
-  const getStatusIcon = (status: RunStatus) => {
-    switch (status) {
+  const getStatusIcon = (task: BackgroundTaskInfo) => {
+    // 如果正在重连，显示特殊图标
+    if (reconnectingTasks.has(task.runId)) {
+      return <RotateCcw className="text-blue-500 animate-spin" size={16} />;
+    }
+
+    // 根据连接状态显示不同图标
+    if (task.canReconnect) {
+      return <WifiOff className="text-orange-500" size={16} />;
+    }
+    
+    if (task.hasWebSocketConnection) {
+      return <Wifi className="text-green-500" size={16} />;
+    }
+
+    switch (task.status) {
       case 'active':
         return <Play className="text-green-500 animate-pulse" size={16} />;
       case 'paused':
@@ -121,8 +171,20 @@ export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = (
     }
   };
 
-  const getStatusText = (status: RunStatus) => {
-    switch (status) {
+  const getStatusText = (task: BackgroundTaskInfo) => {
+    if (reconnectingTasks.has(task.runId)) {
+      return '重连中';
+    }
+    
+    if (task.canReconnect) {
+      return '可重连';
+    }
+    
+    if (task.hasWebSocketConnection) {
+      return '已连接';
+    }
+
+    switch (task.status) {
       case 'active':
         return '运行中';
       case 'paused':
@@ -134,9 +196,48 @@ export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = (
     }
   };
 
+  const handleManualReconnect = async (taskId: number) => {
+    setReconnectingTasks(prev => new Set([...prev, taskId]));
+    
+    try {
+      // 显示通知
+      notification.info({
+        message: '正在重连',
+        description: `正在尝试重新连接到任务 ${taskId}...`,
+        duration: 2,
+      });
+
+      // 调用重连函数
+      onReconnect(taskId);
+      
+      // 等待一段时间再移除重连状态
+      setTimeout(() => {
+        setReconnectingTasks(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(taskId);
+          return newSet;
+        });
+      }, 3000);
+      
+    } catch (error) {
+      console.error('Manual reconnect failed:', error);
+      notification.error({
+        message: '重连失败',
+        description: `无法重新连接到任务 ${taskId}`,
+        duration: 4,
+      });
+      
+      setReconnectingTasks(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(taskId);
+        return newSet;
+      });
+    }
+  };
+
   const truncateText = (text: string, maxLength: number = 100): string => {
     if (text.length <= maxLength) return text;
-    return text.substring(0, maxLength);
+    return text.substring(0, maxLength) + '...';
   };
 
   if (backgroundTasks.length === 0) {
@@ -145,30 +246,37 @@ export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = (
 
   return (
     <>
-      {/* 浮动指示器 */}
-      <div className="fixed bottom-4 right-4 z-50">
-        <Badge count={backgroundTasks.length} offset={[-5, 5]}>
+      {/* 悬浮指示器 */}
+      <div className="fixed bottom-6 right-6 z-50">
+        <Badge count={backgroundTasks.length} offset={[-8, 8]}>
           <Button
             type="primary"
-            shape="circle"
-            icon={<Play size={20} />}
+            shape="round"
             size="large"
+            icon={<Play size={20} />}
             onClick={() => setShowDetails(true)}
-            className="bg-blue-500 hover:bg-blue-600 border-none shadow-lg animate-pulse"
-          />
+            className="bg-blue-500 hover:bg-blue-600 border-none shadow-lg"
+          >
+            后台任务
+          </Button>
         </Badge>
       </div>
 
-      {/* 详细信息弹窗 */}
+      {/* 详情模态框 */}
       <Modal
-        title={`后台任务 (${backgroundTasks.length})`}
+        title={
+          <div className="flex items-center space-x-2">
+            <Play size={20} className="text-blue-500" />
+            <span>后台任务管理 ({backgroundTasks.length})</span>
+          </div>
+        }
         open={showDetails}
         onCancel={() => setShowDetails(false)}
         footer={null}
-        width={800}
+        width={700}
         className="background-task-modal"
       >
-        <div className="space-y-4">
+        <div className="space-y-4 max-h-96 overflow-y-auto">
           {backgroundTasks.map((task) => (
             <div
               key={task.runId}
@@ -176,18 +284,35 @@ export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = (
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
-                  {getStatusIcon(task.status)}
+                  {getStatusIcon(task)}
                   <div>
                     <div className="font-medium text-gray-900">
                       {task.sessionName}
                     </div>
                     <div className="text-sm text-gray-500">
-                      运行 ID: {task.runId} • {getStatusText(task.status)}
+                      运行 ID: {task.runId} • {getStatusText(task)}
                     </div>
+                    {task.canReconnect && (
+                      <div className="text-xs text-orange-600 mt-1">
+                        🔌 WebSocket断开，可以重新连接
+                      </div>
+                    )}
                   </div>
                 </div>
                 
                 <div className="flex items-center space-x-2">
+                  {task.canReconnect && (
+                    <Tooltip title="手动重连">
+                      <Button
+                        type="text"
+                        icon={<RotateCcw size={16} />}
+                        onClick={() => handleManualReconnect(task.runId)}
+                        loading={reconnectingTasks.has(task.runId)}
+                        className="text-orange-500 hover:bg-orange-50"
+                      />
+                    </Tooltip>
+                  )}
+                  
                   <Tooltip title="重新连接">
                     <Button
                       type="text"
@@ -196,6 +321,7 @@ export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = (
                         onReconnect(task.runId);
                         setShowDetails(false);
                       }}
+                      loading={reconnectingTasks.has(task.runId)}
                       className="text-blue-500 hover:bg-blue-50"
                     />
                   </Tooltip>
@@ -222,41 +348,40 @@ export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = (
                   </Tooltip>
                 </div>
               </div>
-
-              {/* 任务详情 */}
+              
               <div className="mt-3">
-                <div className="text-sm text-gray-600 mb-2">
-                  <strong>进度:</strong> {task.progressInfo}
-                </div>
-                
-                <div 
-                  className="text-sm text-gray-600 cursor-pointer"
-                  onClick={() => setExpandedTask(
-                    expandedTask === task.runId ? null : task.runId
-                  )}
-                >
-                  <strong>任务描述:</strong> 
-                  <span className="ml-1">
+                <div className="text-sm text-gray-700">
+                  <strong>任务：</strong>
+                  <span
+                    className={`${
+                      expandedTask === task.runId ? '' : 'line-clamp-2'
+                    }`}
+                  >
                     {expandedTask === task.runId 
                       ? task.taskDescription 
-                      : task.taskDescription.length > 100
-                        ? `${truncateText(task.taskDescription, 100)}...`
-                        : task.taskDescription
+                      : truncateText(task.taskDescription)
                     }
                   </span>
                   {task.taskDescription.length > 100 && (
-                    <span className="text-blue-500 ml-1">
+                    <button
+                      onClick={() => 
+                        setExpandedTask(
+                          expandedTask === task.runId ? null : task.runId
+                        )
+                      }
+                      className="text-blue-500 hover:text-blue-700 ml-2"
+                    >
                       {expandedTask === task.runId ? '收起' : '展开'}
-                    </span>
+                    </button>
                   )}
                 </div>
                 
-                <div className="text-xs text-gray-400 mt-2">
-                  最后更新: {new Date(task.lastUpdate).toLocaleString()}
+                <div className="text-xs text-gray-500 mt-1">
+                  进度：{task.progressInfo} • 最后更新：
+                  {new Date(task.lastUpdate).toLocaleString()}
                 </div>
               </div>
 
-              {/* 状态特定的提示 */}
               {task.status === 'awaiting_input' && (
                 <Alert
                   message="任务正在等待您的输入"
@@ -274,6 +399,27 @@ export const BackgroundTaskIndicator: React.FC<BackgroundTaskIndicatorProps> = (
                   type="warning"
                   showIcon
                   className="mt-3"
+                />
+              )}
+
+              {task.canReconnect && (
+                <Alert
+                  message="连接已断开"
+                  description="任务仍在后台运行，点击重连按钮恢复连接"
+                  type="warning"
+                  showIcon
+                  className="mt-3"
+                  action={
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<RotateCcw size={14} />}
+                      onClick={() => handleManualReconnect(task.runId)}
+                      loading={reconnectingTasks.has(task.runId)}
+                    >
+                      立即重连
+                    </Button>
+                  }
                 />
               )}
             </div>

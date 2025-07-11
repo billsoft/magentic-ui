@@ -246,17 +246,30 @@ class PlaywrightController:
         """
         await self._ensure_page_ready(page)
         try:
-            screenshot = await page.screenshot(path=path, timeout=15000)
+            screenshot = await page.screenshot(path=path, timeout=30000)  # 🔧 增加超时时间
             return screenshot
-        except Exception:
+        except Exception as e:
             logger.warning(
-                "Screenshot failed, page might not be loaded, stopping page and taking screenshot again"
+                f"Screenshot failed, page might not be loaded, stopping page and taking screenshot again. Error: {e}"
             )
             # stop the page
-            await page.evaluate("window.stop()")
-            # try again
-            screenshot = await page.screenshot(path=path, timeout=15000)
-            return screenshot
+            try:
+                await page.evaluate("window.stop()")
+                # 等待页面稳定
+                await page.wait_for_timeout(2000)
+                # try again with longer timeout
+                screenshot = await page.screenshot(path=path, timeout=30000)
+                return screenshot
+            except Exception as retry_error:
+                logger.error(f"Screenshot retry also failed: {retry_error}")
+                # 🔧 优雅降级：返回基本截图
+                try:
+                    screenshot = await page.screenshot(path=path, timeout=10000, quality=50)
+                    return screenshot
+                except Exception:
+                    # 最后的兜底：返回空字节
+                    logger.warning("All screenshot attempts failed, returning empty bytes")
+                    return b''
 
     async def sleep(self, page: Page, duration: Union[int, float]) -> None:
         """

@@ -115,16 +115,19 @@ async def learn_plan(
         if plan_learning_config:
             model_client = ChatCompletionClient.load_component(plan_learning_config)
         else:
-            # If nothing was provided, use a safe default
-            model_client = ChatCompletionClient.load_component(
-                {
-                    "provider": "OpenAIChatCompletionClient",
+            # 🔧 修复硬编码：使用配置文件中的模型或通用降级配置
+            fallback_config = config.get("model_config", {})
+            if not fallback_config:
+                # 最后的降级选项，使用环境变量或通用配置
+                fallback_config = {
+                    "provider": "autogen_ext.models.openai.OpenAIChatCompletionClient",
                     "config": {
-                        "model": "gpt-4o-2024-08-06",
-                    },
-                    "max_retries": 5,
+                        "model": "gpt-3.5-turbo",  # 通用兼容模型
+                        "timeout": 60.0,
+                        "max_retries": 3,
+                    }
                 }
-            )
+            model_client = ChatCompletionClient.load_component(fallback_config)
 
         # 1. Retrieve messages from database
         runs_result = await list_session_runs(

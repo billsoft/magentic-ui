@@ -166,7 +166,10 @@ async def get_bing_search_results(
                 if max_tokens_per_page == -1:
                     token_limited_content = content
                 else:
-                    tokenizer = tiktoken.encoding_for_model("gpt-4o")
+                    try:
+                        tokenizer = tiktoken.get_encoding("cl100k_base")
+                    except Exception:
+                        tokenizer = tiktoken.get_encoding("p50k_base")
                     tokens = tokenizer.encode(content)
                     limited_content = tokenizer.decode(tokens[:max_tokens_per_page])
                     token_limited_content = limited_content
@@ -184,7 +187,10 @@ async def get_bing_search_results(
                 if max_tokens_per_page == -1:
                     token_limited_content = content
                 else:
-                    tokenizer = tiktoken.encoding_for_model("gpt-4o")
+                    try:
+                        tokenizer = tiktoken.get_encoding("cl100k_base")
+                    except Exception:
+                        tokenizer = tiktoken.get_encoding("p50k_base")
                     tokens = tokenizer.encode(content)
                     limited_content = tokenizer.decode(tokens[:max_tokens_per_page])
                     token_limited_content = limited_content

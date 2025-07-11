@@ -217,14 +217,15 @@ class WebSocketManager:
                 settings_config=settings_config,
                 run=run,
             ):
-                if (
-                    cancellation_token.is_cancelled()
-                    or run_id in self._closed_connections
-                ):
-                    logger.info(
-                        f"Stream cancelled or connection closed for run {run_id}"
-                    )
+                # Only stop if explicitly cancelled, NOT just because connection closed
+                if cancellation_token.is_cancelled():
+                    logger.info(f"Stream cancelled for run {run_id}")
                     break
+                    
+                # For closed connections, just skip message sending but keep processing
+                if run_id in self._closed_connections:
+                    # Task continues in background, just don't send messages to client
+                    logger.debug(f"Processing message in background for run {run_id}")
 
                 if isinstance(message, CheckpointEvent):
                     # Save state to run
@@ -245,7 +246,12 @@ class WebSocketManager:
 
                 formatted_message = self._format_message(message)
                 if formatted_message:
-                    await self._send_message(run_id, formatted_message)
+                    # Only send message if connection is active, otherwise just process silently
+                    if run_id not in self._closed_connections:
+                        await self._send_message(run_id, formatted_message)
+                    else:
+                        # Background processing - save but don't send
+                        logger.debug(f"Background processing message for run {run_id}: {message.__class__.__name__}")
 
                     # Save messages by concrete type
                     if isinstance(
@@ -296,10 +302,56 @@ class WebSocketManager:
         except Exception as e:
             logger.error(f"Stream error for run {run_id}: {e}")
             traceback.print_exc()
-            await self._handle_stream_error(run_id, e)
+            
+            # 🔧 增强网络错误处理 - 区分网络错误和其他错误
+            import openai
+            import httpx
+            
+            error_message = str(e)
+            is_network_error = (
+                isinstance(e, (openai.APIConnectionError, httpx.ConnectError)) or
+                "Connection error" in error_message or
+                "All connection attempts failed" in error_message or
+                "ConnectTimeout" in error_message or
+                "ReadTimeout" in error_message
+            )
+            
+            # 🔧 修复：减少过度的网络错误容忍，恢复直接错误处理
+            if is_network_error:
+                # 网络错误：发送明确的错误信息，不再默认保持任务活跃
+                logger.error(f"Network error for run {run_id}: {e}")
+                
+                await self._send_message(
+                    run_id,
+                    {
+                        "type": "error",
+                        "status": "network_error",
+                        "error": f"网络连接错误：{str(e)}",
+                        "data": {"error": str(e), "error_type": "network_error"},
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                
+                # 标记为错误状态，让用户知道出了问题
+                await self._handle_stream_error(run_id, e)
+                
+            else:
+                # 其他错误：按原有逻辑处理
+                await self._handle_stream_error(run_id, e)
         finally:
             self._cancellation_tokens.pop(run_id, None)
-            self._team_managers.pop(run_id, None)  # Remove the team manager when done
+            # Only remove team manager if task was actually completed or cancelled
+            # Keep team manager for background processing if connection closed but task not done
+            should_remove_team_manager = (
+                cancellation_token.is_cancelled() or  # Explicitly cancelled
+                final_result is not None  # Task completed successfully
+            )
+            
+            if should_remove_team_manager:
+                self._team_managers.pop(run_id, None)
+                logger.info(f"Team manager removed for run {run_id} (task completed or cancelled)")
+            else:
+                logger.info(f"Team manager preserved for run {run_id} (background processing or connection closed)")
 
     async def _save_message(
         self, run_id: int, message: Union[AgentEvent | ChatMessage, LLMCallEventMessage]
@@ -505,12 +557,13 @@ class WebSocketManager:
                         },
                     )
 
-                # Finally cancel the token
+                # Finally cancel the token and clean up team manager
                 self._cancellation_tokens[run_id].cancel()
-                # remove team manager
+                # Remove team manager since task is explicitly stopped
                 team_manager = self._team_managers.pop(run_id, None)
                 if team_manager:
                     await team_manager.close()
+                logger.info(f"Run {run_id} explicitly stopped and team manager cleaned up")
             except Exception as e:
                 logger.error(f"Error stopping run {run_id}: {e}")
                 # We might want to force disconnect here if db update failed

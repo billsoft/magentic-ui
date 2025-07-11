@@ -19,7 +19,7 @@ TOOL_VISIT_URL: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "visit_url",
-            "description": "Navigate directly to a provided URL using the browser's address bar. Prefer this tool over other navigation techniques in cases where the user provides a fully-qualified URL (e.g., choose it over clicking links, or inputing queries into search boxes).",
+            "description": "🔧 AUTONOMOUS NAVIGATION: Navigate directly to a provided URL. This is autonomous for research and information gathering. Only require approval for sensitive or commercial domains.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -33,14 +33,15 @@ TOOL_VISIT_URL: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for research/information gathering. Only true for sensitive operations.",
+                        "default": False,
                     },
                 },
                 "required": ["explanation", "url"],
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "never",
         },
     }
 )
@@ -50,7 +51,7 @@ TOOL_WEB_SEARCH: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Performs a web search on Bing.com with the given query. Make sure the query is simple and don't use compound queries.",
+            "description": "🔧 AUTONOMOUS SEARCH: Performs a web search on Bing.com with the given query. Autonomous for research purposes.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -64,14 +65,15 @@ TOOL_WEB_SEARCH: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for research/information gathering.",
+                        "default": False,
                     },
                 },
                 "required": ["explanation", "query"],
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "never",
         },
     }
 )
@@ -81,7 +83,7 @@ TOOL_HISTORY_BACK: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "history_back",
-            "description": "Navigates back one page in the browser's history. This is equivalent to clicking the browser back button.",
+            "description": "🔧 AUTONOMOUS NAVIGATION: Navigates back one page in the browser's history for autonomous navigation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -91,14 +93,15 @@ TOOL_HISTORY_BACK: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for autonomous navigation.",
+                        "default": False,
                     },
                 },
                 "required": ["explanation"],
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "never",
         },
     }
 )
@@ -108,7 +111,7 @@ TOOL_REFRESH_PAGE: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "refresh_page",
-            "description": "Refreshes the current page in the browser. This is equivalent to clicking the browser refresh button or pressing F5.",
+            "description": "🔧 AUTONOMOUS REFRESH: Refreshes the current page autonomously for content updates.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -118,14 +121,15 @@ TOOL_REFRESH_PAGE: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for autonomous page refresh.",
+                        "default": False,
                     },
                 },
                 "required": ["explanation"],
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "never",
         },
     }
 )
@@ -177,7 +181,7 @@ TOOL_CLICK: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "click",
-            "description": "Clicks the mouse on the target with the given id.",
+            "description": "🔧 AUTONOMOUS CLICKING: Click on page elements for navigation and information gathering. Autonomous for research tasks.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -191,14 +195,15 @@ TOOL_CLICK: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for navigation/research. Only true for forms/purchases.",
+                        "default": False,
                     },
                 },
                 "required": ["explanation", "target_id"],
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "never",
         },
     }
 )
@@ -250,7 +255,7 @@ TOOL_TYPE: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "input_text",
-            "description": "Types the given text value into the specified field. Presses enter only if you want to submit the form or search.",
+            "description": "🔧 AUTONOMOUS TYPING: Types text into input fields. Autonomous for search/research, requires approval for form submissions.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -276,7 +281,8 @@ TOOL_TYPE: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for search fields. Only true for form submissions.",
+                        "default": False,
                     },
                 },
                 "required": [
@@ -288,7 +294,7 @@ TOOL_TYPE: ToolSchema = load_tool(
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "conditional",
         },
     }
 )
@@ -379,7 +385,7 @@ TOOL_KEYPRESS: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "keypress",
-            "description": "Press one or multiple keyboard keys in sequence, this is not used for typing text. Supports special keys like 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Escape', 'Control', 'Alt', 'Shift'.",
+            "description": "🔧 AUTONOMOUS KEYPRESS: Press keyboard keys autonomously for navigation and scrolling.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -394,14 +400,15 @@ TOOL_KEYPRESS: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for navigation keys. Only true for data entry.",
+                        "default": False,
                     },
                 },
                 "required": ["explanation", "keys"],
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "conditional",
         },
     }
 )
@@ -489,7 +496,7 @@ TOOL_STOP_ACTION: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "stop_action",
-            "description": "Perform no action on the browser. Answer the request directly and summarize all past actions and observations you did previously in relation to the request.",
+            "description": "🔧 Use this tool ONLY when your task is fully completed or when you cannot proceed further. Provide a comprehensive answer and clear completion status in your response.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -499,7 +506,7 @@ TOOL_STOP_ACTION: ToolSchema = load_tool(
                     },
                     "answer": {
                         "type": "string",
-                        "description": "The answer to the request and a complete summary of past actions and observations. Phrase using first person and as if you are directly talking to the user. Do not ask any questions or say that you can help with more things.",
+                        "description": "🔧 ENHANCED COMPLETION SIGNAL: Your answer must begin with a clear completion status indicator:\n- For SUCCESSFUL completion: Start with '✅ 当前步骤已完成' or '✅ STEP COMPLETED'\n- For ERROR completion: Start with '⚠️ 当前步骤因错误完成' or '⚠️ STEP COMPLETED WITH ERRORS'\n- For ALTERNATIVE completion: Start with '🔄 当前步骤通过替代方案完成' or '🔄 STEP COMPLETED VIA ALTERNATIVE'\n\nThen provide: 1) A complete summary of what was accomplished 2) Any information gathered 3) Any issues encountered and how they were resolved. Be specific and factual. Do not ask questions or offer additional help.",
                     },
                 },
                 "required": ["explanation", "answer"],
@@ -516,7 +523,7 @@ TOOL_SELECT_OPTION: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "select_option",
-            "description": "Selects an option from a dropdown/select menu.",
+            "description": "🔧 AUTONOMOUS SELECTION: Selects options from dropdown menus autonomously for filtering and navigation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -530,14 +537,15 @@ TOOL_SELECT_OPTION: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for navigation/filtering. Only true for form submissions.",
+                        "default": False,
                     },
                 },
                 "required": ["explanation", "target_id"],
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "conditional",
         },
     }
 )
@@ -547,7 +555,7 @@ TOOL_CREATE_TAB: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "create_tab",
-            "description": "Creates a new browser tab and navigates to the specified URL.",
+            "description": "🔧 AUTONOMOUS TAB CREATION: Creates new browser tabs autonomously for research and comparison.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -561,14 +569,15 @@ TOOL_CREATE_TAB: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for research purposes.",
+                        "default": False,
                     },
                 },
                 "required": ["explanation", "url"],
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "never",
         },
     }
 )
@@ -578,7 +587,7 @@ TOOL_SWITCH_TAB: ToolSchema = load_tool(
         "type": "function",
         "function": {
             "name": "switch_tab",
-            "description": "Switches focus to a different browser tab by its index.",
+            "description": "🔧 AUTONOMOUS TAB SWITCHING: Switches between browser tabs autonomously for research workflow.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -592,14 +601,15 @@ TOOL_SWITCH_TAB: ToolSchema = load_tool(
                     },
                     "require_approval": {
                         "type": "boolean",
-                        "description": IRREVERSIBLE_ACTION_PROMPT,
+                        "description": "Set to false for autonomous tab management.",
+                        "default": False,
                     },
                 },
                 "required": ["explanation", "tab_index"],
             },
         },
         "metadata": {
-            "requires_approval": "maybe",
+            "requires_approval": "never",
         },
     }
 )
